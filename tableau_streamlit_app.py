@@ -50,14 +50,14 @@ SMTP_PORT = os.getenv('SMTP_PORT')
 SENDER_EMAIL = os.getenv('SENDER_EMAIL')
 SENDER_PASSWORD = os.getenv('SENDER_PASSWORD')
 
-# Debug print to check what values are being loaded
+# Debug print statements
 print(f"Loaded email settings:")
 print(f"SMTP_SERVER: {SMTP_SERVER}")
 print(f"SMTP_PORT: {SMTP_PORT}")
 print(f"SENDER_EMAIL: {SENDER_EMAIL}")
 print(f"SENDER_PASSWORD: {'Set' if SENDER_PASSWORD else 'Not set'}")
 
-# Only show error if any of the required email settings are actually missing
+# Validate email settings
 missing_settings = []
 if not SMTP_SERVER or SMTP_SERVER.strip() == '':
     missing_settings.append("SMTP_SERVER")
@@ -69,11 +69,11 @@ if not SENDER_PASSWORD or SENDER_PASSWORD.strip() == '':
     missing_settings.append("SENDER_PASSWORD")
 
 if missing_settings:
-    st.warning(f"""
-    ⚠️ Some email settings are not properly configured. Please check your Streamlit Cloud Secrets and ensure the following variables are set:
-    {chr(10).join(['- ' + setting for setting in missing_settings])}
-    
-    These settings should be configured in your Streamlit Cloud dashboard under Settings > Secrets.
+    st.warning("""
+        ⚠️ Some email settings are not properly configured. Please check your Streamlit Cloud Secrets and ensure the following variables are set:
+        - """ + "\n        - ".join(missing_settings) + """
+        
+        You can set these in your Streamlit Cloud dashboard under Settings > Secrets.
     """)
 else:
     try:
@@ -164,13 +164,23 @@ def get_saved_datasets():
         with sqlite3.connect('data/tableau_data.db') as conn:
             cursor = conn.cursor()
             # Get list of all tables except system and internal tables
-            cursor.execute("""
-                SELECT name FROM sqlite_master 
-                WHERE type='table' 
-                AND name NOT IN ('users', 'organizations', 'schedules', 'sqlite_sequence')
-                AND name NOT LIKE 'sqlite_%'
-                AND name NOT LIKE '_internal_%'
-            """)
+            # For non-superadmin users, also exclude schedule_runs table
+            if st.session_state.user['role'] != 'superadmin':
+                cursor.execute("""
+                    SELECT name FROM sqlite_master 
+                    WHERE type='table' 
+                    AND name NOT IN ('users', 'organizations', 'schedules', 'sqlite_sequence', 'schedule_runs')
+                    AND name NOT LIKE 'sqlite_%'
+                    AND name NOT LIKE '_internal_%'
+                """)
+            else:
+                cursor.execute("""
+                    SELECT name FROM sqlite_master 
+                    WHERE type='table' 
+                    AND name NOT IN ('users', 'organizations', 'schedules', 'sqlite_sequence')
+                    AND name NOT LIKE 'sqlite_%'
+                    AND name NOT LIKE '_internal_%'
+                """)
             datasets = [row[0] for row in cursor.fetchall()]
             print(f"Found user datasets: {datasets}")  # Debug print
             return datasets
@@ -321,12 +331,6 @@ def show_power_user_page():
             st.session_state.show_schedule_page = False
             st.rerun()
             
-        if st.button("💬 Chat with Data", key="power_user_chat_data_btn", use_container_width=True):
-            st.session_state.show_qa_page = True
-            st.session_state.show_tableau_page = False
-            st.session_state.show_schedule_page = False
-            st.rerun()
-            
         if st.button("📅 Schedule Reports", key="power_user_schedule_reports_btn", use_container_width=True):
             st.session_state.show_schedule_page = True
             st.session_state.show_tableau_page = False
@@ -351,7 +355,7 @@ def show_power_user_page():
 
 def show_user_dashboard():
     """Show user dashboard (only for superadmin)"""
-    st.title("User Dashboard")
+    st.title("👥 User Dashboard")
     
     if st.session_state.user['role'] != 'superadmin':
         st.error("Access denied")
@@ -375,30 +379,157 @@ def show_user_dashboard():
     user_manager = UserManagement()
     
     with tabs[0]:
-        st.header("👥 User Management")
+        st.header("👤 User Management")
+        
+        # Add new user section
+        with st.expander("➕ Add New User", expanded=False):
+            with st.form("add_user_form"):
+                st.subheader("Create New User")
+                new_username = st.text_input("Username")
+                new_email = st.text_input("Email")
+                new_password = st.text_input("Password", type="password")
+                new_permission = st.selectbox(
+                    "Permission Type",
+                    options=['normal', 'power'],
+                    help="Select the user's permission level"
+                )
+                
+                # Get organizations for selection
+                orgs = []
+                try:
+                    with sqlite3.connect('data/tableau_data.db') as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT rowid, name FROM organizations ORDER BY name")
+                        orgs = cursor.fetchall()
+                except Exception as e:
+                    st.error(f"Error loading organizations: {str(e)}")
+                
+                org_id = None
+                if orgs:
+                    org_options = [("", "No Organization")] + [(str(org[0]), org[1]) for org in orgs]
+                    selected_org = st.selectbox(
+                        "Organization",
+                        options=[org[0] for org in org_options],
+                        format_func=lambda x: dict(org_options)[x],
+                        help="Select the user's organization"
+                    )
+                    org_id = int(selected_org) if selected_org else None
+                
+                if st.form_submit_button("Create User"):
+                    if all([new_username, new_email, new_password]):
+                        try:
+                            if user_manager.add_user_to_org(
+                                username=new_username,
+                                password=new_password,
+                                org_id=org_id,
+                                permission_type=new_permission,
+                                email=new_email
+                            ):
+                                st.success(f"User {new_username} created successfully!")
+                                time.sleep(1)
+                                st.rerun()
+                        except ValueError as e:
+                            st.error(str(e))
+                    else:
+                        st.error("All fields are required")
+        
+        # Existing users management
+        st.subheader("Existing Users")
         users = user_manager.get_all_users()
         if users:
-            st.subheader(f"Total Users: {len(users)}")
-            for user in users:
+            # Add search and filter options
+            search_term = st.text_input("🔍 Search Users", help="Search by username or email")
+            filter_permission = st.multiselect(
+                "Filter by Permission",
+                options=['normal', 'power', 'superadmin'],
+                default=[],
+                help="Select permission types to show"
+            )
+            
+            filtered_users = users
+            if search_term:
+                filtered_users = [user for user in users if search_term.lower() in user[0].lower() or 
+                                (user[3] and search_term.lower() in user[3].lower())]
+            if filter_permission:
+                filtered_users = [user for user in filtered_users if user[2] in filter_permission]
+            
+            st.write(f"Showing {len(filtered_users)} of {len(users)} users")
+            
+            for user in filtered_users:
                 username, role, permission_type, email, org_name = user
                 with st.expander(f"👤 {username}", expanded=False):
                     col1, col2 = st.columns(2)
                     with col1:
                         st.write(f"**Email:** {email or 'Not set'}")
                         st.write(f"**Organization:** {org_name or 'Not assigned'}")
+                        
+                        # Organization reassignment
+                        if orgs:
+                            new_org = st.selectbox(
+                                "Reassign Organization",
+                                options=[org[0] for org in orgs],
+                                format_func=lambda x: next((org[1] for org in orgs if org[0] == x), "No Organization"),
+                                key=f"org_{username}"
+                            )
+                            if st.button("Update Organization", key=f"update_org_{username}"):
+                                try:
+                                    with sqlite3.connect('data/tableau_data.db') as conn:
+                                        cursor = conn.cursor()
+                                        cursor.execute(
+                                            "UPDATE users SET organization_id = ? WHERE username = ?",
+                                            (new_org, username)
+                                        )
+                                        conn.commit()
+                                        st.success(f"Updated {username}'s organization")
+                                        time.sleep(1)
+                                        st.rerun()
+                                except Exception as e:
+                                    st.error(f"Failed to update organization: {str(e)}")
+                    
                     with col2:
                         st.write(f"**Role:** {role}")
-                        new_permission = st.selectbox(
-                            "Permission Type",
-                            options=['normal', 'power', 'superadmin'],
-                            index=['normal', 'power', 'superadmin'].index(permission_type),
-                            key=f"perm_{username}"
-                        )
-                        if new_permission != permission_type:
-                            if st.button("Update Permission", key=f"update_{username}"):
-                                if user_manager.update_user_permission(username, new_permission):
-                                    st.success(f"Updated {username}'s permission to {new_permission}")
-                                    st.rerun()
+                        if username != 'superadmin':  # Prevent modifying superadmin
+                            new_permission = st.selectbox(
+                                "Permission Type",
+                                options=['normal', 'power', 'superadmin'],
+                                index=['normal', 'power', 'superadmin'].index(permission_type),
+                                key=f"perm_{username}"
+                            )
+                            if new_permission != permission_type:
+                                if st.button("Update Permission", key=f"update_{username}"):
+                                    if user_manager.update_user_permission(username, new_permission):
+                                        st.success(f"Updated {username}'s permission to {new_permission}")
+                                        time.sleep(1)
+                                        st.rerun()
+                            
+                            # Add reset password option
+                            if st.button("🔑 Reset Password", key=f"reset_{username}"):
+                                new_password = f"Reset{int(time.time())}"  # Generate temporary password
+                                try:
+                                    with sqlite3.connect('data/tableau_data.db') as conn:
+                                        cursor = conn.cursor()
+                                        cursor.execute(
+                                            "UPDATE users SET password = ? WHERE username = ?",
+                                            (user_manager.hash_password(new_password), username)
+                                        )
+                                        conn.commit()
+                                        st.info(f"Temporary password: {new_password}")
+                                        st.success("Password reset successful. Please share the temporary password with the user.")
+                                except Exception as e:
+                                    st.error(f"Failed to reset password: {str(e)}")
+                            
+                            # Add delete user option
+                            if st.button("🗑️ Delete User", key=f"delete_{username}", type="secondary"):
+                                try:
+                                    with sqlite3.connect('data/tableau_data.db') as conn:
+                                        cursor = conn.cursor()
+                                        cursor.execute("DELETE FROM users WHERE username = ?", (username,))
+                                        conn.commit()
+                                        st.success(f"User {username} deleted successfully!")
+                                        time.sleep(1)
+                                        st.rerun()
+                                except Exception as e:
+                                    st.error(f"Failed to delete user: {str(e)}")
         else:
             st.info("No users found")
     
@@ -454,22 +585,43 @@ def show_user_dashboard():
                                 for user in org_users:
                                     st.write(f"- {user[0]} ({user[1]})")
                             
-                            # Add delete button
-                            if st.button("🗑️ Delete Organization", key=f"delete_org_{org_id}"):
-                                try:
-                                    # First update users to remove organization association
-                                    cursor.execute(
-                                        "UPDATE users SET organization_id = NULL WHERE organization_id = ?",
-                                        (org_id,)
-                                    )
-                                    # Then delete the organization
-                                    cursor.execute("DELETE FROM organizations WHERE rowid = ?", (org_id,))
-                                    conn.commit()
-                                    st.success(f"Organization '{name}' deleted successfully!")
-                                    time.sleep(1)
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Failed to delete organization: {str(e)}")
+                            # Organization actions
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                # Edit organization
+                                new_name = st.text_input("New Name", value=name, key=f"edit_name_{org_id}")
+                                new_description = st.text_area("New Description", value=description or "", key=f"edit_desc_{org_id}")
+                                if st.button("Update", key=f"update_org_{org_id}"):
+                                    try:
+                                        cursor.execute(
+                                            "UPDATE organizations SET name = ?, description = ? WHERE rowid = ?",
+                                            (new_name, new_description, org_id)
+                                        )
+                                        conn.commit()
+                                        st.success("Organization updated successfully!")
+                                        time.sleep(1)
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Failed to update organization: {str(e)}")
+                            
+                            with col2:
+                                # Delete organization
+                                st.write("**Danger Zone**")
+                                if st.button("🗑️ Delete Organization", key=f"delete_org_{org_id}", type="secondary"):
+                                    try:
+                                        # First update users to remove organization association
+                                        cursor.execute(
+                                            "UPDATE users SET organization_id = NULL WHERE organization_id = ?",
+                                            (org_id,)
+                                        )
+                                        # Then delete the organization
+                                        cursor.execute("DELETE FROM organizations WHERE rowid = ?", (org_id,))
+                                        conn.commit()
+                                        st.success(f"Organization '{name}' deleted successfully!")
+                                        time.sleep(1)
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Failed to delete organization: {str(e)}")
                 else:
                     st.info("No organizations found. Create your first organization above.")
         except Exception as e:
@@ -478,98 +630,6 @@ def show_user_dashboard():
     
     with tabs[2]:
         st.header("⚙️ System Settings")
-        
-        # Organization Assignment Section
-        st.subheader("🔄 Organization Assignment")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            try:
-                with sqlite3.connect('data/tableau_data.db') as conn:
-                    cursor = conn.cursor()
-                    
-                    # Get all users except superadmin
-                    cursor.execute("""
-                        SELECT u.username, u.organization_id, o.name as org_name
-                        FROM users u
-                        LEFT JOIN organizations o ON u.organization_id = o.rowid
-                        WHERE u.username != 'superadmin'
-                        ORDER BY u.username
-                    """)
-                    users = cursor.fetchall()
-                    
-                    if users:
-                        selected_user = st.selectbox(
-                            "Select User",
-                            options=[user[0] for user in users],
-                            format_func=lambda x: f"{x} (Current Org: {dict(zip([u[0] for u in users], [u[2] or 'None' for u in users]))[x]})"
-                        )
-                        
-                        # Get current org for selected user
-                        current_org = next((user[1] for user in users if user[0] == selected_user), None)
-                        
-                        # Get all organizations
-                        cursor.execute("SELECT rowid, name FROM organizations ORDER BY name")
-                        organizations = cursor.fetchall()
-                        
-                        if organizations:
-                            org_options = [("", "No Organization")] + [(str(org[0]), org[1]) for org in organizations]
-                            current_index = 0
-                            for i, (org_id, _) in enumerate(org_options):
-                                if org_id == str(current_org):
-                                    current_index = i
-                                    break
-                            
-                            new_org = st.selectbox(
-                                "Assign to Organization",
-                                options=[org[0] for org in org_options],
-                                format_func=lambda x: dict(org_options)[x],
-                                index=current_index
-                            )
-                            
-                            if new_org != str(current_org or ""):
-                                if st.button("Update Organization", type="primary"):
-                                    try:
-                                        cursor.execute("""
-                                            UPDATE users 
-                                            SET organization_id = ? 
-                                            WHERE username = ?
-                                        """, (new_org if new_org else None, selected_user))
-                                        conn.commit()
-                                        st.success(f"Updated organization for {selected_user}")
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Failed to update organization: {str(e)}")
-                        else:
-                            st.warning("No organizations available. Please create organizations first.")
-                    else:
-                        st.info("No users found to assign")
-            except Exception as e:
-                st.error(f"Error in organization assignment: {str(e)}")
-        
-        with col2:
-            st.write("### Organization Overview")
-            try:
-                with sqlite3.connect('data/tableau_data.db') as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("""
-                        SELECT o.name, COUNT(u.username) as user_count
-                        FROM organizations o
-                        LEFT JOIN users u ON o.rowid = u.organization_id
-                        GROUP BY o.rowid, o.name
-                        ORDER BY o.name
-                    """)
-                    org_stats = cursor.fetchall()
-                    
-                    if org_stats:
-                        for org_name, user_count in org_stats:
-                            st.write(f"**{org_name}**: {user_count} users")
-                    else:
-                        st.info("No organizations found")
-            except Exception as e:
-                st.error(f"Error loading organization statistics: {str(e)}")
-        
-        st.markdown("---")
         
         # Email Configuration
         with st.expander("📧 Email Settings", expanded=False):
@@ -595,14 +655,55 @@ def show_user_dashboard():
         with st.expander("💾 Backup & Restore", expanded=False):
             st.write("Database Backup")
             if st.button("Create Backup", key="create_backup"):
-                # Add backup logic here
-                st.success("Backup created successfully!")
+                try:
+                    backup_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    backup_path = f"data/backup/tableau_data_{backup_time}.db"
+                    os.makedirs("data/backup", exist_ok=True)
+                    
+                    with sqlite3.connect('data/tableau_data.db') as source:
+                        backup = sqlite3.connect(backup_path)
+                        source.backup(backup)
+                        backup.close()
+                    
+                    st.success(f"Backup created successfully at {backup_path}")
+                except Exception as e:
+                    st.error(f"Failed to create backup: {str(e)}")
             
             st.write("Restore Database")
             backup_file = st.file_uploader("Select backup file", type=['db', 'sqlite'])
             if backup_file is not None and st.button("Restore", key="restore_backup"):
-                # Add restore logic here
-                st.success("Database restored successfully!")
+                try:
+                    # Save uploaded file
+                    restore_path = f"data/backup/restore_{int(time.time())}.db"
+                    with open(restore_path, "wb") as f:
+                        f.write(backup_file.getvalue())
+                    
+                    # Verify backup file
+                    with sqlite3.connect(restore_path) as backup_conn:
+                        cursor = backup_conn.cursor()
+                        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                        tables = cursor.fetchall()
+                        required_tables = {'users', 'organizations', 'schedules'}
+                        found_tables = {table[0] for table in tables}
+                        
+                        if not required_tables.issubset(found_tables):
+                            st.error("Invalid backup file: Missing required tables")
+                            return
+                    
+                    # Restore database
+                    with sqlite3.connect(restore_path) as source:
+                        backup = sqlite3.connect('data/tableau_data.db')
+                        source.backup(backup)
+                        backup.close()
+                    
+                    st.success("Database restored successfully!")
+                    time.sleep(1)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to restore database: {str(e)}")
+                finally:
+                    if os.path.exists(restore_path):
+                        os.remove(restore_path)
 
 def authenticate(server_url: str, auth_method: str, credentials: dict, site_name: str = None) -> TSC.Server:
     """Authenticate with Tableau server"""
@@ -1024,7 +1125,7 @@ def show_saved_datasets(permission_type):
                             st.rerun()
                     
                     with col2:
-                        if st.button("💬 Ask Questions", key=f"qa_dataset_btn_{dataset}"):
+                        if st.button("❓ Ask Questions", key=f"qa_dataset_btn_{dataset}"):
                             st.session_state.current_dataset = dataset
                             st.session_state.show_qa_page = True
                             st.rerun()
@@ -1121,6 +1222,18 @@ class DatabaseManager:
                         status TEXT DEFAULT 'active'
                     )
                 """)
+                
+                # Create schedule_runs table for internal tracking
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS schedule_runs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        schedule_id INTEGER NOT NULL,
+                        run_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        status TEXT NOT NULL,
+                        error_message TEXT,
+                        FOREIGN KEY (schedule_id) REFERENCES schedules(id)
+                    )
+                """)
                 conn.commit()
         except Exception as e:
             print(f"Error creating schedules table: {str(e)}")
@@ -1190,7 +1303,7 @@ class DatabaseManager:
             return False
     
     def list_tables(self, include_internal=True):
-        """List only dataset tables with View_Names column"""
+        """List tables based on user permissions"""
         INTERNAL_TABLES = {
             'users', 
             'user_groups', 
@@ -1200,7 +1313,8 @@ class DatabaseManager:
             'sqlite_sequence',
             'sqlite_stat1',
             'sqlite_stat4',
-            'schedules'
+            'schedules',
+            'schedule_runs'  # Added to internal tables
         }
         
         try:
@@ -1210,6 +1324,9 @@ class DatabaseManager:
                 tables = cursor.fetchall()
                 
                 if not include_internal:
+                    # Only show schedule_runs to superadmin
+                    if 'user' in st.session_state and st.session_state.user['role'] == 'superadmin':
+                        INTERNAL_TABLES.remove('schedule_runs')
                     return [table[0] for table in tables if table[0] not in INTERNAL_TABLES]
                 return [table[0] for table in tables]
                 
@@ -1245,50 +1362,67 @@ class DatabaseManager:
             # Get schedule configuration based on type
             new_schedule_config = self._handle_schedule_type_settings(schedule_type, current_config)
             
-            # Email and WhatsApp recipients
+            # Recipients section
             st.markdown("### Recipients")
             
-            # Email recipients
+            # Email recipients (required)
+            st.write("📧 **Email Recipients (Required)**")
             current_email_list = "\n".join(current_email_config.get('recipients', []))
             email_list = st.text_area(
-                "Email Recipients (one per line)",
+                "Enter email addresses, one per line",
                 value=current_email_list,
-                help="Enter email addresses, one per line"
+                help="At least one email recipient is required"
             )
             
-            # WhatsApp recipients
+            # WhatsApp recipients (optional)
+            st.write("📱 **WhatsApp Recipients (Optional)**")
             current_whatsapp_list = "\n".join(current_email_config.get('whatsapp_recipients', []))
-            whatsapp_list = st.text_area(
-                "WhatsApp Recipients (one per line)",
-                value=current_whatsapp_list,
-                help="Enter WhatsApp numbers with country code (e.g., +1234567890), one per line"
-            )
+            enable_whatsapp = st.checkbox("Enable WhatsApp notifications", 
+                value=bool(current_whatsapp_list),
+                help="Check this to add WhatsApp recipients")
+            whatsapp_list = ""
+            if enable_whatsapp:
+                whatsapp_list = st.text_area(
+                    "Enter WhatsApp numbers with country code, one per line",
+                    value=current_whatsapp_list,
+                    help="Example: +1234567890"
+                )
             
             # Message body
+            st.write("✉️ **Message**")
             message_body = st.text_area(
-                "Message Body (optional)",
+                "Custom Message (optional)",
                 value=current_email_config.get('body', ''),
-                help="Enter an optional message to include with the report"
+                help="Enter a custom message to include in the notifications"
             )
             
             # Update button
             if st.button("Update Schedule", type="primary", use_container_width=True):
                 try:
-                    # Validate recipients
-                    if not email_list.strip() and not whatsapp_list.strip():
-                        st.error("Please enter at least one recipient (email or WhatsApp)")
+                    # Validate email recipients
+                    email_recipients = [email.strip() for email in email_list.split('\n') if email.strip()]
+                    if not email_recipients:
+                        st.error("Please enter at least one email recipient")
                         return
+                    
+                    # Prepare WhatsApp recipients if enabled
+                    whatsapp_recipients = []
+                    if enable_whatsapp and whatsapp_list.strip():
+                        whatsapp_recipients = [num.strip() for num in whatsapp_list.split('\n') if num.strip()]
                     
                     # Prepare email configuration
                     new_email_config = {
-                        'recipients': [e.strip() for e in email_list.split('\n') if e.strip()],
-                        'whatsapp_recipients': [w.strip() for w in whatsapp_list.split('\n') if w.strip()],
-                        'body': message_body,
                         'smtp_server': SMTP_SERVER,
                         'smtp_port': SMTP_PORT,
                         'sender_email': SENDER_EMAIL,
-                        'sender_password': SENDER_PASSWORD
+                        'sender_password': SENDER_PASSWORD,
+                        'recipients': email_recipients,
+                        'body': message_body.strip()
                     }
+                    
+                    # Add WhatsApp recipients only if enabled and numbers provided
+                    if whatsapp_recipients:
+                        new_email_config['whatsapp_recipients'] = whatsapp_recipients
                     
                     # Update schedule using the existing job ID
                     updated_job_id = report_manager.schedule_report(
@@ -1306,7 +1440,7 @@ class DatabaseManager:
                         st.rerun()
                     else:
                         st.error("Failed to update schedule")
-                        
+                    
                 except Exception as e:
                     st.error(f"Failed to update schedule: {str(e)}")
                     print(f"Schedule update error details: {str(e)}")
@@ -1487,166 +1621,400 @@ def display_pdf(pdf_path: str, title: str = "PDF Preview"):
         st.info("Please use the download button to view the PDF.")
 
 def show_schedule_page():
-    """Show schedule management interface"""
+    """Show schedule management page"""
     st.title("📅 Schedule Management")
     
-    # Initialize report manager
+    # Initialize ReportManager (it will load email settings from environment variables)
     report_manager = ReportManager()
     
-    # Add Create New Schedule button at the top
-    if st.button("➕ Create New Schedule", type="primary", use_container_width=True):
+    # Get active schedules
+    schedules = report_manager.get_active_schedules()
+    
+    # Create new schedule button
+    if st.button("➕ Create New Schedule", use_container_width=True):
         st.session_state.show_create_schedule = True
         st.rerun()
     
-    st.markdown("---")
-    
-    # Get saved schedules
-    schedules = report_manager.get_active_schedules()
-    
-    if not schedules:
-        st.info("No schedules found. Click 'Create New Schedule' to get started.")
-    else:
-        st.write(f"Found {len(schedules)} schedule(s)")
-        
-        # Display each schedule
+    # Display existing schedules
+    if schedules:
+        st.write("### Existing Schedules")
         for schedule_id, schedule in schedules.items():
-            with st.expander(f"Schedule: {schedule.get('dataset_name', 'Unknown Dataset')}"):
-                st.write(f"Type: {schedule.get('schedule_config', {}).get('type', 'Unknown')}")
-                st.write(f"Configuration: {schedule.get('schedule_config', {})}")
-                
-                # Add Modify and Delete buttons
+            with st.expander(f"Schedule: {schedule['dataset_name']} ({schedule['schedule_config']['type']})"):
                 col1, col2 = st.columns(2)
+                
                 with col1:
-                    if st.button("✏️ Modify", key=f"modify_{schedule_id}", use_container_width=True):
-                        st.session_state.modifying_schedule = schedule_id
+                    st.write("**Dataset:**", schedule['dataset_name'])
+                    st.write("**Type:**", schedule['schedule_config']['type'])
+                    st.write("**Next Run:**", schedule.get('next_run', 'Not scheduled'))
+                
+                with col2:
+                    st.write("**Recipients:**")
+                    if schedule['email_config']['recipients']:
+                        st.write("📧 Email:", ", ".join(schedule['email_config']['recipients']))
+                    if schedule['email_config'].get('whatsapp_recipients'):
+                        st.write("📱 WhatsApp:", ", ".join(schedule['email_config']['whatsapp_recipients']))
+                
+                # Schedule actions
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    if st.button("🔄 Run Now", key=f"run_{schedule_id}"):
+                        try:
+                            with st.spinner("Generating and sending report..."):
+                                report_manager.send_report(
+                                    dataset_name=schedule['dataset_name'],
+                                    email_config=schedule['email_config'],
+                                    format_config=schedule.get('format_config')
+                                )
+                                st.success("Report sent successfully!")
+                        except Exception as e:
+                            st.error(f"Error running schedule: {str(e)}")
+                
+                with col2:
+                    if st.button("✏️ Modify", key=f"modify_{schedule_id}"):
+                        st.session_state.modifying_schedule = schedule
                         st.session_state.show_modify_schedule = True
                         st.rerun()
                 
-                with col2:
-                    if st.button("🗑️ Delete", key=f"delete_{schedule_id}", type="secondary", use_container_width=True):
-                        if report_manager.remove_schedule(schedule_id):
-                            st.success(f"Schedule deleted successfully!")
-                            time.sleep(1)
-                            st.rerun()
-                        else:
-                            st.error("Failed to delete schedule")
-                
-                # Display report if available
-                if 'last_report' in schedule:
-                    report_path = schedule['last_report']
-                    if os.path.exists(report_path):
-                        display_pdf(report_path, title="Last Generated Report")
-                
-                # Show preview if available
-                if 'preview_buffer' in st.session_state:
-                    # Save preview to a temporary file
-                    preview_path = os.path.join('static/reports', f'preview_{datetime.now().strftime("%Y%m%d_%H%M%S")}.pdf')
-                    with open(preview_path, 'wb') as f:
-                        f.write(st.session_state.preview_buffer.getvalue())
-                    display_pdf(preview_path, title="Report Preview")
-                    # Clean up the temporary file
-                    try:
-                        os.remove(preview_path)
-                    except:
-                        pass
+                with col3:
+                    if st.button("🗑️ Delete", key=f"delete_{schedule_id}"):
+                        try:
+                            if report_manager.remove_schedule(schedule_id):
+                                st.success("Schedule deleted successfully!")
+                                st.rerun()
+                            else:
+                                st.error("Failed to delete schedule")
+                        except Exception as e:
+                            st.error(f"Error deleting schedule: {str(e)}")
+    else:
+        st.info("No schedules found. Create a new schedule to get started!")
     
     # Handle create new schedule
     if st.session_state.get('show_create_schedule'):
-        st.markdown("---")
-        st.subheader("Create New Schedule")
-        
-        # Dataset selection
-        datasets = get_saved_datasets()
-        selected_dataset = st.selectbox("Select Dataset", datasets)
-        
-        if selected_dataset:
-            # Recipients
-            st.write("👥 Recipients")
-            email_list = st.text_area(
-                "Email Addresses",
-                placeholder="Enter email addresses (one per line)",
-                help="These addresses will receive the scheduled reports"
-            )
-            
-            # WhatsApp recipients
-            st.write("📱 WhatsApp Recipients")
-            whatsapp_list = st.text_area(
-                "WhatsApp Numbers",
-                placeholder="Enter WhatsApp numbers with country code (one per line)\nExample: +1234567890",
-                help="These numbers will receive WhatsApp notifications"
-            )
-            
-            # Message content
-            st.write("📝 Message Content")
-            message_body = st.text_area(
-                "Message Body",
-                placeholder="Enter the message to include with the report",
-                help="This message will be included in both email and WhatsApp notifications"
-            )
-            
-            # Schedule settings
-            st.write("🕒 Schedule Settings")
-            schedule_type = st.selectbox(
-                "Frequency",
-                ["One-time", "Daily", "Weekly", "Monthly"],
-                help="How often to send the report"
-            ).lower()
-            
-            # Get schedule configuration based on type
-            db_manager = DatabaseManager()
-            schedule_config = db_manager._handle_schedule_type_settings(schedule_type, {})
-            
-            # Create schedule button
-            if st.button("Create Schedule", type="primary", use_container_width=True):
-                try:
-                    # Validate recipients
-                    if not email_list.strip() and not whatsapp_list.strip():
-                        st.error("Please enter at least one recipient (email or WhatsApp)")
-                        return
-                    
-                    # Prepare email configuration
-                    email_config = {
-                        'recipients': [e.strip() for e in email_list.split('\n') if e.strip()],
-                        'whatsapp_recipients': [w.strip() for w in whatsapp_list.split('\n') if w.strip()],
-                        'body': message_body,
-                        'smtp_server': SMTP_SERVER,
-                        'smtp_port': SMTP_PORT,
-                        'sender_email': SENDER_EMAIL,
-                        'sender_password': SENDER_PASSWORD
-                    }
-                    
-                    # Create schedule
-                    job_id = report_manager.schedule_report(
-                        dataset_name=selected_dataset,
-                        email_config=email_config,
-                        schedule_config=schedule_config
-                    )
-                    
-                    if job_id:
-                        st.success("Schedule created successfully! 🎉")
-                        time.sleep(1)
-                        st.session_state.show_create_schedule = False
-                        st.rerun()
-                    else:
-                        st.error("Failed to create schedule")
-                        
-                except Exception as e:
-                    st.error(f"Failed to create schedule: {str(e)}")
-            
-            # Cancel button
-            if st.button("Cancel", use_container_width=True):
-                st.session_state.show_create_schedule = False
-                st.rerun()
-    
-    # Handle modify schedule
-    if st.session_state.get('show_modify_schedule') and st.session_state.get('modifying_schedule'):
-        db_manager = DatabaseManager()
-        db_manager.modify_schedule(st.session_state.modifying_schedule)
+        create_schedule(st.session_state.current_dataset, report_manager)
 
 def show_qa_page():
     """Show Q&A interface for dataset analysis"""
-    st.title("💬 Chat with Data")
-    # ... rest of the file content ...
+    st.title("❓ Ask Questions")
+    
+    # Check if a dataset is selected
+    if not st.session_state.get('current_dataset'):
+        st.warning("Please select a dataset first")
+        return
+    
+    # Load the selected dataset
+    df = load_dataset(st.session_state.current_dataset)
+    if df is None:
+        st.error("Failed to load dataset")
+        return
+    
+    # Initialize DataAnalyzer
+    from data_analyzer import DataAnalyzer
+    analyzer = DataAnalyzer()
+    
+    # Show dataset info
+    st.subheader("📊 Dataset Information")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write(f"**Dataset:** {st.session_state.current_dataset}")
+        st.write(f"**Total Rows:** {len(df)}")
+    with col2:
+        st.write(f"**Columns:** {', '.join(df.columns)}")
+    
+    # Show data preview
+    with st.expander("👀 Preview Data", expanded=False):
+        st.dataframe(df.head(), use_container_width=True)
+    
+    st.markdown("---")
+    
+    # Q&A Interface
+    st.subheader("🤔 Ask Questions")
+    
+    # Generate smart questions based on data types
+    smart_questions = [
+        "What are the key trends in this dataset?",
+        "Can you provide a summary of the main findings?",
+        "What are the highest and lowest values?",
+        "What patterns do you notice in the data?",
+        "Are there any unusual or unexpected values?",
+        "How are different variables related to each other?",
+        "What is the overall distribution of values?"
+    ]
+    
+    # Add column-specific questions
+    for col in df.columns:
+        if df[col].dtype in ['int64', 'float64']:
+            smart_questions.extend([
+                f"What is the average {col}?",
+                f"What is the highest {col}?",
+                f"How is {col} distributed?",
+                f"Are there any outliers in {col}?"
+            ])
+    
+    # Question input
+    question = st.selectbox(
+        "Select a suggested question or type your own below:",
+        [""] + list(set(smart_questions)),  # Remove duplicates
+        key="qa_question_select"
+    )
+    
+    custom_question = st.text_input(
+        "Or type your own question:",
+        key="qa_custom_question",
+        help="Ask anything about the data and I'll analyze it for you"
+    )
+    
+    # Get answer button
+    if st.button("Get Answer", key="qa_get_answer", type="primary"):
+        final_question = custom_question if custom_question else question
+        if final_question:
+            with st.spinner("Analyzing data..."):
+                answer, fig = analyzer.ask_question(df, final_question)
+                
+                # Display answer in a nice format
+                st.markdown("### 💡 Answer")
+                st.markdown(answer)
+                
+                # Display visualization if available
+                if fig is not None:
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                # Add a divider
+                st.markdown("---")
+        else:
+            st.warning("Please select or type a question first")
+    
+    # Add a back button
+    st.markdown("---")
+    if st.button("← Back to Datasets", use_container_width=True):
+        st.session_state.show_qa_page = False
+        st.rerun()
+
+def get_schedule_config(schedule_type):
+    """Get schedule configuration based on type"""
+    if schedule_type == "one-time":
+        col1, col2 = st.columns(2)
+        with col1:
+            date = st.date_input(
+                "Select Date",
+                value=datetime.now().date(),
+                min_value=datetime.now().date()
+            )
+            hour = st.number_input("Hour (24-hour format)", 0, 23, value=8)
+            minute = st.number_input("Minute", 0, 59, value=0)
+        
+        with col2:
+            st.write("Schedule Summary")
+            st.info(f"Report will be sent once on: {date} at {hour:02d}:{minute:02d}")
+        
+        return {
+            'type': 'one-time',
+            'date': date.strftime("%Y-%m-%d"),
+            'hour': hour,
+            'minute': minute
+        }
+    
+    elif schedule_type == "daily":
+        col1, col2 = st.columns(2)
+        with col1:
+            hour = st.number_input("Hour (24-hour format)", 0, 23, value=8)
+            minute = st.number_input("Minute", 0, 59, value=0)
+        
+        with col2:
+            st.write("Schedule Summary")
+            st.info(f"Report will be sent daily at {hour:02d}:{minute:02d}")
+        
+        return {
+            'type': 'daily',
+            'hour': hour,
+            'minute': minute
+        }
+    
+    elif schedule_type == "weekly":
+        days = []
+        day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        
+        st.write("Select Days of Week")
+        col1, col2, col3 = st.columns(3)
+        columns = [col1, col2, col3]
+        
+        for i, day in enumerate(day_names):
+            with columns[i // 3]:
+                if st.checkbox(day, key=f"schedule_day_{day}"):
+                    days.append(i)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            hour = st.number_input("Hour (24-hour format)", min_value=0, max_value=23, value=8)
+            minute = st.number_input("Minute", min_value=0, max_value=59, value=0)
+        
+        with col2:
+            st.write("Schedule Summary")
+            if days:
+                selected_days = [day_names[i] for i in days]
+                st.info(f"Report will be sent every {', '.join(selected_days)} at {hour:02d}:{minute:02d}")
+            else:
+                st.warning("Please select at least one day")
+        
+        return {
+            'type': 'weekly',
+            'days': days,
+            'hour': hour,
+            'minute': minute
+        }
+    
+    else:  # monthly
+        col1, col2 = st.columns(2)
+        with col1:
+            day_option = st.radio(
+                "Day Selection",
+                ["Specific Day", "Last Day", "First Weekday", "Last Weekday"],
+                help="Choose how to select the day of the month"
+            )
+            
+            if day_option == "Specific Day":
+                day = st.number_input("Day of Month", 1, 31, value=1)
+            else:
+                day = None
+            
+            hour = st.number_input("Hour (24-hour format)", 0, 23, value=8)
+            minute = st.number_input("Minute", 0, 59, value=0)
+        
+        with col2:
+            st.write("Schedule Summary")
+            time_str = f"{hour:02d}:{minute:02d}"
+            if day_option == "Specific Day":
+                st.info(f"Report will be sent on day {day} of each month at {time_str}")
+            else:
+                st.info(f"Report will be sent on the {day_option} of each month at {time_str}")
+        
+        return {
+            'type': 'monthly',
+            'day': day,
+            'day_option': day_option,
+            'hour': hour,
+            'minute': minute
+        }
+
+def create_schedule(dataset_name: str, report_manager: ReportManager):
+    """Create a new schedule"""
+    st.subheader("Create New Schedule")
+    
+    try:
+        # Load dataset for formatting preview
+        df = load_dataset(dataset_name)
+        if df is None:
+            st.error("Failed to load dataset")
+            return
+        
+        # Initialize report formatter
+        report_formatter = ReportFormatter()
+        
+        # Create tabs for schedule creation
+        tabs = st.tabs(["Recipients", "Schedule", "Report Format"])
+        
+        with tabs[0]:
+            st.write("### Recipients")
+            # Email recipients (required)
+            st.write("📧 **Email Recipients (Required)**")
+            email_list = st.text_area(
+                "Enter email addresses, one per line",
+                help="At least one email recipient is required"
+            )
+            
+            # WhatsApp recipients (optional)
+            st.write("📱 **WhatsApp Recipients (Optional)**")
+            enable_whatsapp = st.checkbox("Enable WhatsApp notifications", 
+                help="Check this to add WhatsApp recipients")
+            whatsapp_list = ""
+            if enable_whatsapp:
+                whatsapp_list = st.text_area(
+                    "Enter WhatsApp numbers with country code, one per line",
+                    help="Example: +1234567890"
+                )
+            
+            # Custom message
+            st.write("✉️ **Message**")
+            message_body = st.text_area(
+                "Custom Message (optional)",
+                help="Enter a custom message to include in the notifications"
+            )
+        
+        with tabs[1]:
+            st.write("### Schedule Settings")
+            schedule_type = st.selectbox(
+                "Schedule Type",
+                ["one-time", "daily", "weekly", "monthly"],
+                help="Select how often you want the report to be sent"
+            )
+            
+            # Get schedule configuration based on type
+            schedule_config = get_schedule_config(schedule_type)
+        
+        with tabs[2]:
+            # Show report formatting interface
+            report_formatter.show_formatting_interface(df)
+        
+        # Create schedule button
+        if st.button("Create Schedule", type="primary"):
+            # Validate email recipients
+            email_recipients = [email.strip() for email in email_list.split('\n') if email.strip()]
+            if not email_recipients:
+                st.error("Please enter at least one email recipient")
+                return
+            
+            # Prepare WhatsApp recipients if enabled
+            whatsapp_recipients = []
+            if enable_whatsapp and whatsapp_list.strip():
+                whatsapp_recipients = [num.strip() for num in whatsapp_list.split('\n') if num.strip()]
+            
+            # Prepare email configuration
+            email_config = {
+                'smtp_server': SMTP_SERVER,
+                'smtp_port': SMTP_PORT,
+                'sender_email': SENDER_EMAIL,
+                'sender_password': SENDER_PASSWORD,
+                'recipients': email_recipients,
+                'body': message_body.strip()
+            }
+            
+            # Add WhatsApp recipients only if enabled and numbers provided
+            if whatsapp_recipients:
+                email_config['whatsapp_recipients'] = whatsapp_recipients
+            
+            # Get format configuration from session state
+            format_config = {
+                'report_title': st.session_state.report_content.get('report_title', "Data Report"),
+                'selected_columns': st.session_state.report_content.get('selected_columns', df.columns.tolist()),
+                'include_row_count': st.session_state.report_content.get('include_row_count', True),
+                'include_totals': st.session_state.report_content.get('include_totals', True),
+                'include_averages': st.session_state.report_content.get('include_averages', True),
+                'page_size': report_formatter.page_size,
+                'orientation': report_formatter.orientation,
+                'margins': report_formatter.margins,
+                'title_style': report_formatter.title_style,
+                'table_style': report_formatter.table_style,
+                'chart_size': report_formatter.chart_size
+            }
+            
+            with st.spinner("Creating schedule..."):
+                # Create the schedule with format configuration
+                job_id = report_manager.schedule_report(
+                    dataset_name=dataset_name,
+                    email_config=email_config,
+                    schedule_config=schedule_config,
+                    format_config=format_config
+                )
+                
+                if job_id:
+                    st.success("Schedule created successfully!")
+                    st.session_state.show_create_schedule = False
+                    st.rerun()
+                else:
+                    st.error("Failed to create schedule. Please check your settings and try again.")
+    
+    except Exception as e:
+        st.error(f"Error creating schedule: {str(e)}")
+        print(f"Error details: {e.__dict__ if hasattr(e, '__dict__') else 'No details'}")
 
 def main():
     """Main function to run the Streamlit application"""
@@ -1657,8 +2025,11 @@ def main():
     if not st.session_state.get('authenticated', False):
         show_login_page()
     else:
-        # Show different pages based on user type
-        if st.session_state.get('user_type') == 'power_user':
+        # Show different pages based on user role
+        user_role = st.session_state.user.get('role')
+        if user_role == 'superadmin':
+            show_user_dashboard()
+        elif user_role == 'power':
             show_power_user_page()
         else:
             show_normal_user_page()
