@@ -785,6 +785,7 @@ class ReportManager:
         try:
             print(f"\nStarting to send report for dataset: {dataset_name}")
             print(f"Email config: {email_config}")
+            print(f"Format config: {format_config}")
             
             # Use class-level email settings if not provided in email_config
             email_config = email_config.copy()  # Create a copy to avoid modifying the original
@@ -798,10 +799,6 @@ class ReportManager:
             missing_fields = [field for field in required_email_fields if not email_config.get(field)]
             if missing_fields:
                 raise ValueError(f"Missing required email configuration fields: {', '.join(missing_fields)}")
-            
-            # Convert port to integer if it's a string
-            if isinstance(email_config['smtp_port'], str):
-                email_config['smtp_port'] = int(email_config['smtp_port'])
             
             # Load dataset
             with sqlite3.connect('data/tableau_data.db') as conn:
@@ -825,42 +822,45 @@ class ReportManager:
                 formatter = ReportFormatter()
                 
                 # Apply saved formatting settings
-                formatter.page_size = format_config.get('page_size', formatter.page_size)
-                formatter.orientation = format_config.get('orientation', formatter.orientation)
-                formatter.margins = format_config.get('margins', formatter.margins)
-                formatter.title_style = format_config.get('title_style', formatter.title_style)
-                formatter.table_style = format_config.get('table_style', formatter.table_style)
-                formatter.chart_size = format_config.get('chart_size', formatter.chart_size)
+                if format_config.get('page_size'):
+                    formatter.page_size = format_config['page_size']
+                if format_config.get('orientation'):
+                    formatter.orientation = format_config['orientation']
+                if format_config.get('margins'):
+                    formatter.margins = format_config['margins']
+                if format_config.get('title_style'):
+                    formatter.title_style = format_config['title_style']
+                if format_config.get('table_style'):
+                    formatter.table_style = format_config['table_style']
+                if format_config.get('chart_size'):
+                    formatter.chart_size = format_config['chart_size']
                 
-                # Set report content directly instead of using session state
-                report_content = format_config.get('report_content', {})
-                selected_columns = report_content.get('selected_columns', df.columns.tolist())
+                # Get selected columns and other content settings
+                selected_columns = format_config.get('selected_columns', df.columns.tolist())
+                df_selected = df[selected_columns]
                 
                 # Generate formatted report
                 pdf_buffer = formatter.generate_report(
-                    df[selected_columns] if selected_columns else df,
-                    include_row_count=report_content.get('include_row_count', True),
-                    include_totals=report_content.get('include_totals', True),
-                    include_averages=report_content.get('include_averages', True),
-                    report_title=report_content.get('report_title', f"Report: {dataset_name}")
+                    df_selected,
+                    include_row_count=format_config.get('include_row_count', True),
+                    include_totals=format_config.get('include_totals', True),
+                    include_averages=format_config.get('include_averages', True),
+                    report_title=format_config.get('report_title', f"Report: {dataset_name}")
                 )
-                
-                # Save report
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                content_hash = hashlib.sha256(pdf_buffer.getvalue()).hexdigest()
-                filename = f"{content_hash}_{timestamp}.pdf"
-                file_path = self.public_reports_dir / filename
-                
-                with open(file_path, 'wb') as f:
-                    f.write(pdf_buffer.getvalue())
-                print(f"Report saved to: {file_path}")
             else:
                 # Use default formatting if no format_config provided
                 print("Using default formatting...")
-                file_path = self.save_report(df, dataset_name)
+                pdf_buffer = self.generate_pdf(df, f"Report: {dataset_name}")
             
-            if not file_path:
-                raise Exception("Failed to generate report file")
+            # Save report
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            content_hash = hashlib.sha256(pdf_buffer.getvalue()).hexdigest()
+            filename = f"{content_hash}_{timestamp}.pdf"
+            file_path = self.public_reports_dir / filename
+            
+            with open(file_path, 'wb') as f:
+                f.write(pdf_buffer.getvalue())
+            print(f"Report saved to: {file_path}")
             
             # Generate shareable link
             share_link = self.get_report_url(file_path)
@@ -894,7 +894,7 @@ This is an automated report. Please do not reply to this email."""
             # Attach report file
             print("Attaching report file...")
             with open(file_path, 'rb') as f:
-                attachment = MIMEApplication(f.read(), _subtype=file_path.suffix[1:])
+                attachment = MIMEApplication(f.read(), _subtype='pdf')
                 attachment.add_header('Content-Disposition', 'attachment', filename=file_path.name)
                 msg.attach(attachment)
             
@@ -944,8 +944,6 @@ _(Link expires in 24 hours)_"""
             print(error_msg)
             print(f"Error type: {type(e)}")
             print(f"Error details: {e.__dict__ if hasattr(e, '__dict__') else 'No details'}")
-            if hasattr(e, 'args'):
-                print(f"Error arguments: {e.args}")
             raise Exception(error_msg) from e
     
     def remove_schedule(self, job_id: str) -> bool:

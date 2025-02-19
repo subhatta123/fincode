@@ -2,19 +2,39 @@ import sqlite3
 import json
 from pathlib import Path
 
-def check_database():
+def check_database(is_superadmin=False):
+    """Check database tables and contents. Only superadmin can see schedule_runs table."""
     db_path = Path("data/tableau_data.db")
     
     try:
         with sqlite3.connect(db_path) as conn:
             cursor = conn.cursor()
             
-            # Check tables
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            # Show user-facing tables only
+            if is_superadmin:
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+            else:
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name != 'schedule_runs'")
+            
             tables = cursor.fetchall()
-            print("\nTables in database:")
+            print("\nUser-facing tables in database:")
             for table in tables:
                 print(f"- {table[0]}")
+            
+            # Only show schedule_runs to superadmin
+            if is_superadmin:
+                print("\nSchedule Runs table contents:")
+                cursor.execute("SELECT * FROM schedule_runs")
+                rows = cursor.fetchall()
+                if rows:
+                    cursor.execute("PRAGMA table_info(schedule_runs)")
+                    columns = [col[1] for col in cursor.fetchall()]
+                    for row in rows:
+                        print("\n" + "="*50)
+                        for col, value in zip(columns, row):
+                            print(f"{col}: {value}")
+                else:
+                    print("No schedule runs found")
             
             # Check schedules table
             print("\nSchedules table contents:")
