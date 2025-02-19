@@ -494,7 +494,7 @@ class ReportManager:
         if not serialized_config:
             return None
             
-        from reportlab.lib.styles import ParagraphStyle
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
         from reportlab.lib.colors import HexColor, Color
         from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
         
@@ -517,8 +517,13 @@ class ReportManager:
             if isinstance(text_color, str) and text_color.startswith('#'):
                 text_color = HexColor(text_color)
             
+            # Get base styles
+            styles = getSampleStyleSheet()
+            
+            # Create title style with proper parent
             format_config['title_style'] = ParagraphStyle(
                 'CustomTitle',
+                parent=styles['Title'],
                 fontName=title_style_data.get('fontName', 'Helvetica'),
                 fontSize=title_style_data.get('fontSize', 24),
                 alignment=alignment_map.get(title_style_data.get('alignment', 1), TA_CENTER),

@@ -287,8 +287,18 @@ class ReportFormatter:
             elements.append(self.header_image)
             elements.append(Spacer(1, 20))
         
+        # Create default title style if none exists
+        if not self.title_style:
+            self.title_style = ParagraphStyle(
+                'CustomTitle',
+                parent=self.styles['Title'],
+                fontSize=24,
+                spaceAfter=30,
+                alignment=TA_CENTER
+            )
+        
         # Add title using the provided report_title
-        title = Paragraph(report_title, self.title_style or self.styles['Title'])
+        title = Paragraph(report_title, self.title_style)
         elements.append(title)
         
         # Add timestamp
