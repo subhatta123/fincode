@@ -25,8 +25,8 @@ A Streamlit-based web application for analyzing and reporting Tableau data.
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/subhatta123/tabtest.git
-cd tabtest
+git clone https://github.com/subhatta123/fincode.git
+cd fincode
 ```
 
 2. Install dependencies:
