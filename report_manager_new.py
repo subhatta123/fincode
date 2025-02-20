@@ -135,8 +135,9 @@ class ReportManager:
                 conn.commit()
                 print("Database initialized successfully")
                 
-                # Load existing schedules from JSON if they exist
-                if self.schedules_file.exists():
+                # Only migrate schedules from JSON if the schedules table is empty
+                cursor.execute("SELECT COUNT(*) FROM schedules")
+                if cursor.fetchone()[0] == 0 and self.schedules_file.exists():
                     try:
                         with open(self.schedules_file, 'r') as f:
                             schedules = json.load(f)
@@ -338,13 +339,12 @@ class ReportManager:
             return None
             
         # Create a serializable copy of the format config
-        serializable_config = {
-            'page_size': format_config.get('page_size', None),
-            'orientation': format_config.get('orientation', 'portrait'),
-            'margins': format_config.get('margins', None),
-            'chart_size': format_config.get('chart_size', None),
-            'report_content': format_config.get('report_content', {}),
-        }
+        serializable_config = {}
+        
+        # Handle basic configuration
+        for key in ['page_size', 'orientation', 'margins', 'chart_size', 'report_content']:
+            if key in format_config:
+                serializable_config[key] = format_config[key]
         
         # Handle title style
         if 'title_style' in format_config:
@@ -374,7 +374,6 @@ class ReportManager:
         # Handle table style
         if 'table_style' in format_config:
             table_style = format_config['table_style']
-            # Convert TableStyle commands to serializable format
             serializable_config['table_style'] = []
             
             # Get the commands from the TableStyle object
@@ -386,23 +385,19 @@ class ReportManager:
                 commands = []
                 
             for cmd in commands:
-                # Convert command to serializable format
                 try:
                     if len(cmd) != 4:
-                        print(f"Skipping invalid command: {cmd}")
                         continue
                         
                     cmd_name, start_pos, end_pos, value = cmd
                     
                     # Convert color objects to hex strings
                     if hasattr(value, 'rgb'):
-                        # Convert RGB values to integers (0-255)
                         rgb = [int(x * 255) if isinstance(x, float) else x for x in value.rgb()]
                         value = '#{:02x}{:02x}{:02x}'.format(*rgb)
                     elif hasattr(value, 'hexval'):
                         value = '#{:06x}'.format(value.hexval())
                     elif isinstance(value, (int, float)):
-                        # Keep numeric values as is
                         value = float(value)
                     
                     # Convert tuples to lists for JSON serialization
@@ -498,16 +493,28 @@ class ReportManager:
     def schedule_report(self, dataset_name: str, email_config: dict, schedule_config: dict, format_config: dict = None, existing_job_id: str = None) -> str:
         """Schedule a report based on configuration"""
         try:
-            # Input validation
-            if not dataset_name or not email_config or not schedule_config:
-                raise ValueError("Missing required parameters for scheduling")
+            # Input validation with detailed error messages
+            if not dataset_name:
+                print("Error: dataset_name is required")
+                return None
+            if not email_config:
+                print("Error: email_config is required")
+                return None
+            if not schedule_config:
+                print("Error: schedule_config is required")
+                return None
+            
+            # Validate email configuration
+            if not email_config.get('recipients'):
+                print("Error: email_config must include at least one recipient")
+                return None
             
             # Get timezone from config or default to UTC
             timezone_str = schedule_config.get('timezone', 'UTC')
             try:
                 timezone = pytz.timezone(timezone_str)
             except pytz.exceptions.UnknownTimeZoneError:
-                print(f"Invalid timezone {timezone_str}, falling back to UTC")
+                print(f"Warning: Invalid timezone {timezone_str}, falling back to UTC")
                 timezone = pytz.UTC
                 timezone_str = 'UTC'
             
@@ -516,17 +523,30 @@ class ReportManager:
             
             # Create the job based on schedule type
             try:
-                schedule_type = schedule_config['type']
+                schedule_type = schedule_config.get('type')
+                if not schedule_type:
+                    print("Error: schedule_type is required in schedule_config")
+                    return None
+                
+                print(f"Creating {schedule_type} schedule for dataset: {dataset_name}")
+                
                 hour = schedule_config.get('hour', 0)
                 minute = schedule_config.get('minute', 0)
                 
                 if schedule_type == 'one-time':
                     if 'date' not in schedule_config:
-                        raise ValueError("Date not specified for one-time schedule")
+                        print("Error: date is required for one-time schedule")
+                        return None
                     
                     # Parse date and time in the specified timezone
                     dt_str = f"{schedule_config['date']} {hour:02d}:{minute:02d}:00"
-                    local_dt = timezone.localize(datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S"))
+                    try:
+                        local_dt = timezone.localize(datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S"))
+                    except ValueError as e:
+                        print(f"Error parsing date/time: {str(e)}")
+                        return None
+                    
+                    print(f"Scheduling one-time job for: {local_dt}")
                     
                     # Add job to scheduler
                     self.scheduler.add_job(
@@ -541,6 +561,7 @@ class ReportManager:
                     )
                 
                 elif schedule_type == 'daily':
+                    print(f"Scheduling daily job at {hour:02d}:{minute:02d}")
                     self.scheduler.add_job(
                         func=self.send_report,
                         trigger='cron',
@@ -556,8 +577,10 @@ class ReportManager:
                 elif schedule_type == 'weekly':
                     days = schedule_config.get('days', [])
                     if not days:
-                        raise ValueError("Days not specified for weekly schedule")
+                        print("Error: days list is required for weekly schedule")
+                        return None
                     
+                    print(f"Scheduling weekly job for days {days} at {hour:02d}:{minute:02d}")
                     self.scheduler.add_job(
                         func=self.send_report,
                         trigger='cron',
@@ -575,6 +598,10 @@ class ReportManager:
                     day_option = schedule_config.get('day_option', 'Specific Day')
                     day = schedule_config.get('day', 1)
                     
+                    if day_option == 'Specific Day' and not day:
+                        print("Error: day is required for monthly schedule with Specific Day option")
+                        return None
+                    
                     if day_option == 'Last Day':
                         day = 'last'
                     elif day_option == 'First Weekday':
@@ -582,6 +609,7 @@ class ReportManager:
                     elif day_option == 'Last Weekday':
                         day = 'last mon'
                     
+                    print(f"Scheduling monthly job for {day_option} (day: {day}) at {hour:02d}:{minute:02d}")
                     self.scheduler.add_job(
                         func=self.send_report,
                         trigger='cron',
@@ -596,48 +624,62 @@ class ReportManager:
                     )
                 
                 else:
-                    raise ValueError(f"Invalid schedule type: {schedule_type}")
+                    print(f"Error: Invalid schedule type: {schedule_type}")
+                    return None
                 
                 # Save schedule to database
-                with sqlite3.connect(self.db_path) as conn:
-                    cursor = conn.cursor()
-                    
-                    # Get next run time in the specified timezone
-                    job = self.scheduler.get_job(job_id)
-                    next_run = job.next_run_time.astimezone(timezone).isoformat() if job.next_run_time else None
-                    
-                    cursor.execute("""
-                        INSERT OR REPLACE INTO schedules (
-                            id, dataset_name, schedule_type, schedule_config, email_config, 
-                            format_config, timezone, created_at, next_run, status
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        job_id,
-                        dataset_name,
-                        schedule_type,
-                        json.dumps(schedule_config),
-                        json.dumps(email_config),
-                        json.dumps(format_config) if format_config else None,
-                        timezone_str,
-                        datetime.now(timezone).isoformat(),
-                        next_run,
-                        'active'
-                    ))
-                    conn.commit()
+                try:
+                    with sqlite3.connect(self.db_path) as conn:
+                        cursor = conn.cursor()
+                        
+                        # Get next run time in the specified timezone
+                        job = self.scheduler.get_job(job_id)
+                        if not job:
+                            print("Error: Failed to retrieve scheduled job")
+                            return None
+                            
+                        next_run = job.next_run_time.astimezone(timezone).isoformat() if job.next_run_time else None
+                        
+                        # Serialize format_config properly
+                        serializable_format_config = self._serialize_format_config(format_config)
+                        
+                        cursor.execute("""
+                            INSERT OR REPLACE INTO schedules (
+                                id, dataset_name, schedule_type, schedule_config, email_config, 
+                                format_config, timezone, created_at, next_run, status
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            job_id,
+                            dataset_name,
+                            schedule_type,
+                            json.dumps(schedule_config),
+                            json.dumps(email_config),
+                            json.dumps(serializable_format_config) if serializable_format_config else None,
+                            timezone_str,
+                            datetime.now(timezone).isoformat(),
+                            next_run,
+                            'active'
+                        ))
+                        conn.commit()
+                except Exception as db_error:
+                    print(f"Error saving schedule to database: {str(db_error)}")
+                    if self.scheduler.get_job(job_id):
+                        self.scheduler.remove_job(job_id)
+                    return None
                 
                 print(f"Successfully scheduled report with ID: {job_id}")
                 print(f"Next run time (in {timezone_str}): {next_run}")
                 return job_id
                 
             except Exception as scheduler_error:
-                print(f"Failed to create schedule: {str(scheduler_error)}")
+                print(f"Error creating schedule: {str(scheduler_error)}")
                 # Clean up if job was partially created
                 if self.scheduler.get_job(job_id):
                     self.scheduler.remove_job(job_id)
                 return None
                 
         except Exception as e:
-            print(f"Failed to schedule report: {str(e)}")
+            print(f"Error scheduling report: {str(e)}")
             return None
 
     def verify_whatsapp_number(self, to_number: str) -> bool:
@@ -1172,8 +1214,9 @@ _(Link expires in 24 hours)_"""
             for row in rows:
                 job_id, dataset_name, schedule_config_str, email_config_str, format_config_str, timezone_str = row
                 
-                # Skip if job already exists
+                # Skip if job already exists in scheduler
                 if self.scheduler.get_job(job_id):
+                    print(f"Job {job_id} already exists in scheduler, skipping")
                     continue
                 
                 try:
@@ -1197,11 +1240,13 @@ _(Link expires in 24 hours)_"""
                 except Exception as e:
                     print(f"Failed to load schedule {job_id}: {str(e)}")
                     # Mark failed schedule as inactive
-                    cursor.execute(
-                        "UPDATE schedules SET status = 'inactive' WHERE id = ?",
-                        (job_id,)
-                    )
-                    conn.commit()
+                    with sqlite3.connect(self.db_path) as conn:
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            "UPDATE schedules SET status = 'inactive' WHERE id = ?",
+                            (job_id,)
+                        )
+                        conn.commit()
                     
         except Exception as e:
             print(f"Failed to load saved schedules: {str(e)}")
