@@ -1379,6 +1379,7 @@ class DatabaseManager:
             # Get existing schedule details
             report_manager = ReportManager()
             schedules = report_manager.get_active_schedules()
+            
             if schedule_id not in schedules:
                 st.error("Schedule not found")
                 return
@@ -1694,31 +1695,20 @@ def show_schedule_page():
                         st.write("📱 WhatsApp:", ", ".join(schedule['email_config']['whatsapp_recipients']))
                 
                 # Schedule actions
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    if st.button("🔄 Run Now", key=f"run_{schedule_id}"):
-                        try:
-                            with st.spinner("Generating and sending report..."):
-                                report_manager.send_report(
-                                    dataset_name=schedule['dataset_name'],
-                                    email_config=schedule['email_config'],
-                                    format_config=schedule.get('format_config')
-                                )
-                                st.success("Report sent successfully!")
-                        except Exception as e:
-                            st.error(f"Error running schedule: {str(e)}")
+                col1, col2 = st.columns(2)
                 
-                with col2:
-                    if st.button("✏️ Modify", key=f"modify_{schedule_id}"):
-                        st.session_state.modifying_schedule = schedule
+                with col1:
+                    if st.button("✏️ Modify", key=f"modify_{schedule_id}", use_container_width=True):
                         st.session_state.show_modify_schedule = True
+                        st.session_state.modifying_schedule = schedule_id
                         st.rerun()
                 
-                with col3:
-                    if st.button("🗑️ Delete", key=f"delete_{schedule_id}"):
+                with col2:
+                    if st.button("🗑️ Delete", key=f"delete_{schedule_id}", type="secondary", use_container_width=True):
                         try:
                             if report_manager.remove_schedule(schedule_id):
                                 st.success("Schedule deleted successfully!")
+                                time.sleep(1)
                                 st.rerun()
                             else:
                                 st.error("Failed to delete schedule")

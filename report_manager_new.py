@@ -502,124 +502,93 @@ class ReportManager:
             if not dataset_name or not email_config or not schedule_config:
                 raise ValueError("Missing required parameters for scheduling")
             
-            # Validate schedule configuration
-            if 'type' not in schedule_config:
-                raise ValueError("Schedule type not specified")
-            
-            # Validate email configuration
-            if not email_config.get('recipients'):
-                raise ValueError("No email recipients specified")
-
-            # Generate job_id if not provided
-            job_id = existing_job_id or str(uuid.uuid4())
-            
-            # Create serializable copies of configurations
-            def make_serializable(obj):
-                """Create a JSON-serializable copy of an object"""
-                if isinstance(obj, (str, int, float, bool, type(None))):
-                    return obj
-                elif isinstance(obj, (list, tuple)):
-                    return [make_serializable(item) for item in obj]
-                elif isinstance(obj, dict):
-                    return {str(k): make_serializable(v) for k, v in obj.items()}
-                else:
-                    return str(obj)
-
-            email_config_copy = make_serializable(email_config)
-            schedule_config_copy = make_serializable(schedule_config)
-            format_config_copy = make_serializable(format_config) if format_config else None
-
-            # Get timezone
+            # Get timezone from config or default to UTC
             timezone_str = schedule_config.get('timezone', 'UTC')
             try:
                 timezone = pytz.timezone(timezone_str)
-            except:
-                print(f"Invalid timezone {timezone_str}, using UTC")
+            except pytz.exceptions.UnknownTimeZoneError:
+                print(f"Invalid timezone {timezone_str}, falling back to UTC")
                 timezone = pytz.UTC
-
-            # Save schedule to database first
-            try:
-                with sqlite3.connect(self.db_path) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("""
-                        INSERT OR REPLACE INTO schedules (
-                            id, dataset_name, schedule_type, schedule_config, 
-                            email_config, format_config, timezone, status
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        job_id,
-                        dataset_name,
-                        schedule_config['type'],
-                        json.dumps(schedule_config_copy),
-                        json.dumps(email_config_copy),
-                        json.dumps(format_config_copy) if format_config_copy else None,
-                        timezone_str,
-                        'active'
-                    ))
-                    conn.commit()
-            except Exception as db_error:
-                raise Exception(f"Failed to save schedule to database: {str(db_error)}")
-
+                timezone_str = 'UTC'
+            
+            # Generate job_id if not provided
+            job_id = existing_job_id or str(uuid.uuid4())
+            
             # Create the job based on schedule type
             try:
-                if schedule_config['type'] == 'one-time':
+                schedule_type = schedule_config['type']
+                hour = schedule_config.get('hour', 0)
+                minute = schedule_config.get('minute', 0)
+                
+                if schedule_type == 'one-time':
                     if 'date' not in schedule_config:
                         raise ValueError("Date not specified for one-time schedule")
                     
                     # Parse date and time in the specified timezone
-                    schedule_date = datetime.strptime(
-                        f"{schedule_config['date']} {schedule_config['hour']:02d}:{schedule_config['minute']:02d}:00",
-                        "%Y-%m-%d %H:%M:%S"
-                    )
-                    schedule_date = timezone.localize(schedule_date)
+                    dt_str = f"{schedule_config['date']} {hour:02d}:{minute:02d}:00"
+                    local_dt = timezone.localize(datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S"))
                     
                     # Add job to scheduler
                     self.scheduler.add_job(
                         func=self.send_report,
                         trigger='date',
-                        run_date=schedule_date,
-                        args=[dataset_name, email_config_copy, format_config_copy],
+                        run_date=local_dt,
+                        args=[dataset_name, email_config, format_config],
                         id=job_id,
                         name=f"Report_{dataset_name}",
                         replace_existing=True,
                         timezone=timezone
                     )
                 
-                elif schedule_config['type'] == 'daily':
+                elif schedule_type == 'daily':
                     self.scheduler.add_job(
                         func=self.send_report,
                         trigger='cron',
-                        hour=schedule_config['hour'],
-                        minute=schedule_config['minute'],
-                        args=[dataset_name, email_config_copy, format_config_copy],
+                        hour=hour,
+                        minute=minute,
+                        args=[dataset_name, email_config, format_config],
                         id=job_id,
                         name=f"Report_{dataset_name}",
                         replace_existing=True,
                         timezone=timezone
                     )
                 
-                elif schedule_config['type'] == 'weekly':
+                elif schedule_type == 'weekly':
+                    days = schedule_config.get('days', [])
+                    if not days:
+                        raise ValueError("Days not specified for weekly schedule")
+                    
                     self.scheduler.add_job(
                         func=self.send_report,
                         trigger='cron',
-                        day_of_week=schedule_config['day'],
-                        hour=schedule_config['hour'],
-                        minute=schedule_config['minute'],
-                        args=[dataset_name, email_config_copy, format_config_copy],
+                        day_of_week=','.join(str(day) for day in days),
+                        hour=hour,
+                        minute=minute,
+                        args=[dataset_name, email_config, format_config],
                         id=job_id,
                         name=f"Report_{dataset_name}",
                         replace_existing=True,
                         timezone=timezone
                     )
                 
-                elif schedule_config['type'] == 'monthly':
+                elif schedule_type == 'monthly':
+                    day_option = schedule_config.get('day_option', 'Specific Day')
+                    day = schedule_config.get('day', 1)
+                    
+                    if day_option == 'Last Day':
+                        day = 'last'
+                    elif day_option == 'First Weekday':
+                        day = '1st mon'
+                    elif day_option == 'Last Weekday':
+                        day = 'last mon'
+                    
                     self.scheduler.add_job(
                         func=self.send_report,
                         trigger='cron',
-                        day=schedule_config['day'],
-                        hour=schedule_config['hour'],
-                        minute=schedule_config['minute'],
-                        args=[dataset_name, email_config_copy, format_config_copy],
+                        day=day,
+                        hour=hour,
+                        minute=minute,
+                        args=[dataset_name, email_config, format_config],
                         id=job_id,
                         name=f"Report_{dataset_name}",
                         replace_existing=True,
@@ -627,9 +596,37 @@ class ReportManager:
                     )
                 
                 else:
-                    raise ValueError(f"Invalid schedule type: {schedule_config['type']}")
+                    raise ValueError(f"Invalid schedule type: {schedule_type}")
+                
+                # Save schedule to database
+                with sqlite3.connect(self.db_path) as conn:
+                    cursor = conn.cursor()
+                    
+                    # Get next run time in the specified timezone
+                    job = self.scheduler.get_job(job_id)
+                    next_run = job.next_run_time.astimezone(timezone).isoformat() if job.next_run_time else None
+                    
+                    cursor.execute("""
+                        INSERT OR REPLACE INTO schedules (
+                            id, dataset_name, schedule_type, schedule_config, email_config, 
+                            format_config, timezone, created_at, next_run, status
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        job_id,
+                        dataset_name,
+                        schedule_type,
+                        json.dumps(schedule_config),
+                        json.dumps(email_config),
+                        json.dumps(format_config) if format_config else None,
+                        timezone_str,
+                        datetime.now(timezone).isoformat(),
+                        next_run,
+                        'active'
+                    ))
+                    conn.commit()
                 
                 print(f"Successfully scheduled report with ID: {job_id}")
+                print(f"Next run time (in {timezone_str}): {next_run}")
                 return job_id
                 
             except Exception as scheduler_error:
@@ -1161,66 +1158,109 @@ _(Link expires in 24 hours)_"""
             raise
     
     def load_saved_schedules(self):
-        """Load and activate saved schedules from database"""
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT * FROM schedules WHERE status = 'active'")
-                schedules = cursor.fetchall()
-                
-                for schedule in schedules:
-                    schedule_id = schedule[0]
-                    dataset_name = schedule[1]
-                    schedule_config = json.loads(schedule[3])
-                    email_config = json.loads(schedule[4])
-                    format_config = json.loads(schedule[5]) if schedule[5] else None
-                    
-                    # Check if job already exists in scheduler
-                    if not self.scheduler.get_job(schedule_id):
-                        self.schedule_report(
-                            dataset_name,
-                            email_config,
-                            schedule_config,
-                            format_config,
-                            existing_job_id=schedule_id
-                        )
-                
-                print(f"Loaded {len(schedules)} saved schedules")
-        except Exception as e:
-            print(f"Error loading saved schedules: {str(e)}")
-
-    def get_active_schedules(self) -> dict:
-        """Get all active schedules from the database"""
+        """Load saved schedules from database and add them to the scheduler"""
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    SELECT id, dataset_name, schedule_type, schedule_config, 
-                           email_config, format_config, created_at, last_run, 
-                           next_run, status 
+                    SELECT id, dataset_name, schedule_config, email_config, format_config, timezone
                     FROM schedules 
                     WHERE status = 'active'
                 """)
                 rows = cursor.fetchall()
+
+            for row in rows:
+                job_id, dataset_name, schedule_config_str, email_config_str, format_config_str, timezone_str = row
                 
-                schedules = {}
+                # Skip if job already exists
+                if self.scheduler.get_job(job_id):
+                    continue
+                
+                try:
+                    # Parse configurations
+                    schedule_config = json.loads(schedule_config_str)
+                    email_config = json.loads(email_config_str)
+                    format_config = json.loads(format_config_str) if format_config_str else None
+                    
+                    # Ensure timezone is set in schedule_config
+                    schedule_config['timezone'] = timezone_str or 'UTC'
+                    
+                    # Schedule the job using existing method
+                    self.schedule_report(
+                        dataset_name=dataset_name,
+                        email_config=email_config,
+                        schedule_config=schedule_config,
+                        format_config=format_config,
+                        existing_job_id=job_id
+                    )
+                    
+                except Exception as e:
+                    print(f"Failed to load schedule {job_id}: {str(e)}")
+                    # Mark failed schedule as inactive
+                    cursor.execute(
+                        "UPDATE schedules SET status = 'inactive' WHERE id = ?",
+                        (job_id,)
+                    )
+                    conn.commit()
+                    
+        except Exception as e:
+            print(f"Failed to load saved schedules: {str(e)}")
+            return False
+        
+        return True
+
+    def get_active_schedules(self) -> dict:
+        """Get all active schedules with their next run times"""
+        schedules = {}
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id, dataset_name, schedule_type, schedule_config, email_config, 
+                           format_config, timezone, next_run, status
+                    FROM schedules 
+                    WHERE status = 'active'
+                """)
+                rows = cursor.fetchall()
+
                 for row in rows:
-                    schedule_id = row[0]
-                    schedules[schedule_id] = {
-                        'dataset_name': row[1],
-                        'schedule_type': row[2],
-                        'schedule_config': json.loads(row[3]),
-                        'email_config': json.loads(row[4]),
-                        'format_config': json.loads(row[5]) if row[5] else None,
-                        'created_at': row[6],
-                        'last_run': row[7],
-                        'next_run': row[8],
-                        'status': row[9]
-                    }
-                
-                print(f"Found {len(schedules)} active schedules")
-                return schedules
-                
+                    (job_id, dataset_name, schedule_type, schedule_config_str, 
+                     email_config_str, format_config_str, timezone_str, next_run_str, status) = row
+                    
+                    try:
+                        # Get timezone
+                        try:
+                            timezone = pytz.timezone(timezone_str or 'UTC')
+                        except pytz.exceptions.UnknownTimeZoneError:
+                            timezone = pytz.UTC
+                        
+                        # Get job from scheduler
+                        job = self.scheduler.get_job(job_id)
+                        if job and job.next_run_time:
+                            # Convert next run time to local timezone
+                            next_run = job.next_run_time.astimezone(timezone)
+                            next_run_str = next_run.isoformat()
+                        
+                        schedule_config = json.loads(schedule_config_str)
+                        email_config = json.loads(email_config_str)
+                        format_config = json.loads(format_config_str) if format_config_str else None
+                        
+                        schedules[job_id] = {
+                            'dataset_name': dataset_name,
+                            'schedule_type': schedule_type,
+                            'schedule_config': schedule_config,
+                            'email_config': email_config,
+                            'format_config': format_config,
+                            'timezone': timezone_str,
+                            'next_run': next_run_str,
+                            'status': status
+                        }
+                    except Exception as e:
+                        print(f"Error processing schedule {job_id}: {str(e)}")
+                        continue
+
         except Exception as e:
             print(f"Error getting active schedules: {str(e)}")
-            return {} 
+            return {}
+
+        return schedules 
