@@ -529,6 +529,14 @@ class ReportManager:
             schedule_config_copy = make_serializable(schedule_config)
             format_config_copy = make_serializable(format_config) if format_config else None
 
+            # Get timezone
+            timezone_str = schedule_config.get('timezone', 'UTC')
+            try:
+                timezone = pytz.timezone(timezone_str)
+            except:
+                print(f"Invalid timezone {timezone_str}, using UTC")
+                timezone = pytz.UTC
+
             # Save schedule to database first
             try:
                 with sqlite3.connect(self.db_path) as conn:
@@ -536,8 +544,8 @@ class ReportManager:
                     cursor.execute("""
                         INSERT OR REPLACE INTO schedules (
                             id, dataset_name, schedule_type, schedule_config, 
-                            email_config, format_config, status
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                            email_config, format_config, timezone, status
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         job_id,
                         dataset_name,
@@ -545,6 +553,7 @@ class ReportManager:
                         json.dumps(schedule_config_copy),
                         json.dumps(email_config_copy),
                         json.dumps(format_config_copy) if format_config_copy else None,
+                        timezone_str,
                         'active'
                     ))
                     conn.commit()
@@ -557,11 +566,12 @@ class ReportManager:
                     if 'date' not in schedule_config:
                         raise ValueError("Date not specified for one-time schedule")
                     
-                    # Parse date and time
+                    # Parse date and time in the specified timezone
                     schedule_date = datetime.strptime(
                         f"{schedule_config['date']} {schedule_config['hour']:02d}:{schedule_config['minute']:02d}:00",
                         "%Y-%m-%d %H:%M:%S"
                     )
+                    schedule_date = timezone.localize(schedule_date)
                     
                     # Add job to scheduler
                     self.scheduler.add_job(
@@ -571,7 +581,8 @@ class ReportManager:
                         args=[dataset_name, email_config_copy, format_config_copy],
                         id=job_id,
                         name=f"Report_{dataset_name}",
-                        replace_existing=True
+                        replace_existing=True,
+                        timezone=timezone
                     )
                 
                 elif schedule_config['type'] == 'daily':
@@ -583,7 +594,8 @@ class ReportManager:
                         args=[dataset_name, email_config_copy, format_config_copy],
                         id=job_id,
                         name=f"Report_{dataset_name}",
-                        replace_existing=True
+                        replace_existing=True,
+                        timezone=timezone
                     )
                 
                 elif schedule_config['type'] == 'weekly':
@@ -596,7 +608,8 @@ class ReportManager:
                         args=[dataset_name, email_config_copy, format_config_copy],
                         id=job_id,
                         name=f"Report_{dataset_name}",
-                        replace_existing=True
+                        replace_existing=True,
+                        timezone=timezone
                     )
                 
                 elif schedule_config['type'] == 'monthly':
@@ -609,7 +622,8 @@ class ReportManager:
                         args=[dataset_name, email_config_copy, format_config_copy],
                         id=job_id,
                         name=f"Report_{dataset_name}",
-                        replace_existing=True
+                        replace_existing=True,
+                        timezone=timezone
                     )
                 
                 else:
