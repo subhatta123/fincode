@@ -289,16 +289,17 @@ class ReportFormatter:
         
         # Create default title style if none exists
         if not self.title_style:
+            styles = getSampleStyleSheet()
             self.title_style = ParagraphStyle(
                 'CustomTitle',
-                parent=self.styles['Title'],
+                parent=styles['Title'],
                 fontSize=24,
                 spaceAfter=30,
                 alignment=TA_CENTER
             )
         
         # Add title using the provided report_title
-        title = Paragraph(report_title, self.title_style)
+        title = Paragraph(str(report_title), self.title_style)
         elements.append(title)
         
         # Add timestamp

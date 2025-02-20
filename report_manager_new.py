@@ -2,7 +2,7 @@ import pandas as pd
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter, landscape
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import io
@@ -19,6 +19,9 @@ import uuid
 from twilio.rest import Client
 import hashlib
 import shutil
+import pytz
+import tableauserverclient as TSC
+from tableau_utils import authenticate, download_and_save_data
 
 class ReportManager:
     def __init__(self):
@@ -34,13 +37,11 @@ class ReportManager:
         self.public_reports_dir = Path("static/reports")
         self.public_reports_dir.mkdir(parents=True, exist_ok=True)
         
-        # Initialize database
-        self.db_path = self.data_dir / "tableau_data.db"
-        
         # Set up schedules file path
         self.schedules_file = self.data_dir / "schedules.json"
         
         # Initialize database
+        self.db_path = 'data/tableau_data.db'
         self._init_database()
         
         # Load email settings from environment variables
@@ -48,14 +49,6 @@ class ReportManager:
         self.smtp_port = os.getenv('SMTP_PORT')
         self.sender_email = os.getenv('SENDER_EMAIL')
         self.sender_password = os.getenv('SENDER_PASSWORD')
-        
-        # Validate email settings
-        if not all([self.smtp_server, self.smtp_port, self.sender_email, self.sender_password]):
-            print("Warning: Email settings not properly configured. Please check your environment variables:")
-            print(f"SMTP_SERVER: {'Set' if self.smtp_server else 'Not set'}")
-            print(f"SMTP_PORT: {'Set' if self.smtp_port else 'Not set'}")
-            print(f"SENDER_EMAIL: {'Set' if self.sender_email else 'Not set'}")
-            print(f"SENDER_PASSWORD: {'Set' if self.sender_password else 'Not set'}")
         
         # Initialize scheduler
         self.scheduler = BackgroundScheduler()
@@ -67,9 +60,6 @@ class ReportManager:
         self.twilio_whatsapp_number = os.getenv('TWILIO_WHATSAPP_NUMBER')
         self.twilio_account_sid = os.getenv('TWILIO_ACCOUNT_SID')
         self.twilio_auth_token = os.getenv('TWILIO_AUTH_TOKEN')
-        
-        # Base URL for report access
-        self.base_url = os.getenv('BASE_URL', 'http://localhost:8501')
         
         if all([self.twilio_account_sid, self.twilio_auth_token, self.twilio_whatsapp_number]):
             try:
@@ -95,6 +85,7 @@ class ReportManager:
                         schedule_config TEXT NOT NULL,
                         email_config TEXT NOT NULL,
                         format_config TEXT,
+                        timezone TEXT DEFAULT 'UTC',
                         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                         last_run TEXT,
                         next_run TEXT,
@@ -113,6 +104,33 @@ class ReportManager:
                         FOREIGN KEY (schedule_id) REFERENCES schedules (id)
                     )
                 """)
+                
+                # Create tableau_connections table (internal table, only visible to superadmin)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS _internal_tableau_connections (
+                        dataset_name TEXT PRIMARY KEY,
+                        server_url TEXT NOT NULL,
+                        auth_method TEXT NOT NULL,
+                        credentials TEXT NOT NULL,
+                        site_name TEXT,
+                        workbook_name TEXT NOT NULL,
+                        view_ids TEXT NOT NULL,
+                        view_names TEXT NOT NULL,
+                        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                # Migrate data from old table if it exists
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tableau_connections'")
+                if cursor.fetchone():
+                    cursor.execute("""
+                        INSERT OR REPLACE INTO _internal_tableau_connections 
+                        SELECT * FROM tableau_connections
+                    """)
+                    cursor.execute("DROP TABLE tableau_connections")
+                    conn.commit()
+                    print("Migrated tableau_connections to internal table")
                 
                 conn.commit()
                 print("Database initialized successfully")
@@ -154,165 +172,77 @@ class ReportManager:
                 
         except Exception as e:
             print(f"Error initializing database: {str(e)}")
-            raise
 
-    def generate_pdf(self, df, title):
+    def generate_pdf(self, df: pd.DataFrame, title: str) -> io.BytesIO:
         """Generate PDF report from DataFrame"""
         buffer = io.BytesIO()
-        # Use landscape orientation for wide tables with wider margins
-        doc = SimpleDocTemplate(
-            buffer, 
-            pagesize=landscape(letter),
-            rightMargin=30,
-            leftMargin=30,
-            topMargin=50,
-            bottomMargin=50
-        )
+        doc = SimpleDocTemplate(buffer, pagesize=landscape(letter))
         elements = []
         
         # Add title
         styles = getSampleStyleSheet()
-        title_style = styles['Title']
-        title_style.fontSize = 24
-        title_style.spaceAfter = 30
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Title'],
+            fontSize=24,
+            spaceAfter=30
+        )
         elements.append(Paragraph(title, title_style))
         
-        # Add timestamp with better styling
-        timestamp_style = styles['Normal']
-        timestamp_style.fontSize = 10
-        timestamp_style.textColor = colors.gray
+        # Add timestamp
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        elements.append(Paragraph(f"Generated on: {timestamp}", timestamp_style))
-        elements.append(Spacer(1, 30))
-        
-        # Add basic summary statistics with better styling
-        summary_title_style = styles['Heading1']
-        summary_title_style.fontSize = 18
-        summary_title_style.spaceAfter = 20
-        elements.append(Paragraph("Summary Statistics", summary_title_style))
-        
-        summary_data = [
-            ["Metric", "Value"],  # Header row
-            ["Total Rows", f"{len(df):,}"],
-            ["Total Columns", str(len(df.columns))]
-        ]
-        
-        # Create summary table with better styling
-        summary_table = Table(
-            summary_data,
-            colWidths=[doc.width/4, doc.width/4],
-            style=[
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2d5d7b')),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 12),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f5f5f5')),
-                ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
-                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 1), (-1, -1), 10),
-                ('GRID', (0, 0), (-1, -1), 1, colors.gray),
-                ('ROWHEIGHT', (0, 0), (-1, -1), 25),
-                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ]
+        timestamp_style = ParagraphStyle(
+            'Timestamp',
+            parent=styles['Normal'],
+            fontSize=10,
+            textColor=colors.gray,
+            spaceAfter=20
         )
-        elements.append(summary_table)
-        elements.append(Spacer(1, 30))
+        elements.append(Paragraph(f"Generated on: {timestamp}", timestamp_style))
         
-        # Add data table title
-        data_title_style = styles['Heading1']
-        data_title_style.fontSize = 18
-        data_title_style.spaceAfter = 20
-        elements.append(Paragraph("Data Preview", data_title_style))
-        
-        # Prepare data for main table with better formatting
-        formatted_df = df.copy()
-        
-        # Format numeric values with commas and proper decimal places
-        for col in df.select_dtypes(include=['number']).columns:
-            try:
-                # Check if the column contains large numbers (like sales figures)
-                if formatted_df[col].max() > 1000:
-                    # Format with commas and 2 decimal places
-                    formatted_df[col] = formatted_df[col].apply(lambda x: f"{x:,.2f}")
-                else:
-                    # For smaller numbers, just use 2 decimal places
-                    formatted_df[col] = formatted_df[col].apply(lambda x: f"{x:.2f}")
-            except:
-                continue
+        # Add summary statistics
+        summary_style = ParagraphStyle(
+            'Summary',
+            parent=styles['Normal'],
+            fontSize=12,
+            spaceAfter=20
+        )
+        elements.append(Paragraph(f"Total Records: {len(df)}", summary_style))
         
         # Prepare table data
-        data = [formatted_df.columns.tolist()]  # Header row
-        max_rows = 50  # Limit rows for better readability
-        if len(formatted_df) > max_rows:
-            data.extend(formatted_df.head(max_rows).values.tolist())
-            note_style = styles['Italic']
-            note_style.textColor = colors.gray
-            elements.append(Paragraph(
-                f"* Showing first {max_rows:,} rows of {len(df):,} total rows",
-                note_style
-            ))
-        else:
-            data.extend(formatted_df.values.tolist())
+        table_data = [df.columns.tolist()]  # Header row
+        table_data.extend(df.values.tolist())
         
         # Calculate column widths based on content
-        num_cols = len(formatted_df.columns)
-        available_width = doc.width - 60  # Account for margins
-        
-        # Define minimum and maximum column widths
-        min_col_width = 60  # Minimum width in points
-        max_col_width = 150  # Maximum width in points
-        
-        # Calculate column widths based on column names and content
         col_widths = []
-        for col_idx in range(num_cols):
-            # Get maximum content width in this column
-            col_content = [str(row[col_idx]) for row in data]
+        for col_idx in range(len(df.columns)):
+            col_content = [str(row[col_idx]) for row in table_data]
             max_content_len = max(len(str(content)) for content in col_content)
-            
-            # Calculate width based on content (approximate 6 points per character)
-            calculated_width = max_content_len * 6
-            
-            # Constrain width between min and max
-            col_width = max(min_col_width, min(calculated_width, max_col_width))
-            col_widths.append(col_width)
+            col_widths.append(min(max_content_len * 7, 200))  # Scale factor of 7, max width 200
         
-        # Adjust widths to fit available space
-        total_width = sum(col_widths)
-        if total_width > available_width:
-            # Scale down proportionally if too wide
-            scale_factor = available_width / total_width
-            col_widths = [width * scale_factor for width in col_widths]
+        # Create table
+        table = Table(table_data, colWidths=col_widths)
         
-        # Create main table with improved styling
-        main_table = Table(
-            data,
-            colWidths=col_widths,
-            repeatRows=1,
-            style=[
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2d5d7b')),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 10),  # Reduced font size
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f5f5f5')),
-                ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
-                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 1), (-1, -1), 8),  # Reduced font size
-                ('GRID', (0, 0), (-1, -1), 1, colors.gray),
-                ('ROWHEIGHT', (0, 0), (-1, -1), 20),
-                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                ('LEFTPADDING', (0, 0), (-1, -1), 4),  # Added padding
-                ('RIGHTPADDING', (0, 0), (-1, -1), 4),  # Added padding
-                ('WORDBREAK', (0, 0), (-1, -1), True),  # Enable word wrapping
-            ]
-        )
-        elements.append(main_table)
+        # Add style to table
+        style = TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 14),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 1), (-1, -1), 12),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ])
+        table.setStyle(style)
         
-        # Build PDF
+        elements.append(table)
         doc.build(elements)
+        
         buffer.seek(0)
         return buffer
 
@@ -566,51 +496,82 @@ class ReportManager:
         return format_config
 
     def schedule_report(self, dataset_name: str, email_config: dict, schedule_config: dict, format_config: dict = None, existing_job_id: str = None) -> str:
-        """Schedule a new report or update existing schedule"""
+        """Schedule a report based on configuration"""
         try:
-            print(f"\nAttempting to {'update' if existing_job_id else 'create new'} schedule for dataset: {dataset_name}")
-            print(f"Schedule config: {schedule_config}")
-            print(f"Email config: {email_config}")
-            
             # Input validation
-            if not dataset_name:
-                raise ValueError("Dataset name is required")
-            if not email_config or not email_config.get('recipients'):
-                raise ValueError("Email configuration with recipients is required")
-            if not schedule_config or 'type' not in schedule_config:
-                raise ValueError("Schedule configuration with type is required")
+            if not dataset_name or not email_config or not schedule_config:
+                raise ValueError("Missing required parameters for scheduling")
+            
+            # Validate schedule configuration
+            if 'type' not in schedule_config:
+                raise ValueError("Schedule type not specified")
+            
+            # Validate email configuration
+            if not email_config.get('recipients'):
+                raise ValueError("No email recipients specified")
 
-            # Use existing job_id for updates, generate new one for new schedules
-            job_id = existing_job_id if existing_job_id else str(uuid.uuid4())
-            print(f"Using job ID: {job_id}")
+            # Generate job_id if not provided
+            job_id = existing_job_id or str(uuid.uuid4())
             
-            # If this is an update, remove the old job first
-            if existing_job_id and self.scheduler.get_job(existing_job_id):
-                self.scheduler.remove_job(existing_job_id)
-                print(f"Removed existing job: {existing_job_id}")
-            
+            # Create serializable copies of configurations
+            def make_serializable(obj):
+                """Create a JSON-serializable copy of an object"""
+                if isinstance(obj, (str, int, float, bool, type(None))):
+                    return obj
+                elif isinstance(obj, (list, tuple)):
+                    return [make_serializable(item) for item in obj]
+                elif isinstance(obj, dict):
+                    return {str(k): make_serializable(v) for k, v in obj.items()}
+                else:
+                    return str(obj)
+
+            email_config_copy = make_serializable(email_config)
+            schedule_config_copy = make_serializable(schedule_config)
+            format_config_copy = make_serializable(format_config) if format_config else None
+
+            # Save schedule to database first
+            try:
+                with sqlite3.connect(self.db_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT OR REPLACE INTO schedules (
+                            id, dataset_name, schedule_type, schedule_config, 
+                            email_config, format_config, status
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        job_id,
+                        dataset_name,
+                        schedule_config['type'],
+                        json.dumps(schedule_config_copy),
+                        json.dumps(email_config_copy),
+                        json.dumps(format_config_copy) if format_config_copy else None,
+                        'active'
+                    ))
+                    conn.commit()
+            except Exception as db_error:
+                raise Exception(f"Failed to save schedule to database: {str(db_error)}")
+
             # Create the job based on schedule type
             try:
                 if schedule_config['type'] == 'one-time':
                     if 'date' not in schedule_config:
                         raise ValueError("Date not specified for one-time schedule")
                     
+                    # Parse date and time
                     schedule_date = datetime.strptime(
                         f"{schedule_config['date']} {schedule_config['hour']:02d}:{schedule_config['minute']:02d}:00",
                         "%Y-%m-%d %H:%M:%S"
                     )
                     
-                    if schedule_date <= datetime.now():
-                        raise ValueError("Schedule date must be in the future")
-                    
-                    print(f"Scheduling one-time job for: {schedule_date}")
+                    # Add job to scheduler
                     self.scheduler.add_job(
                         func=self.send_report,
                         trigger='date',
                         run_date=schedule_date,
-                        args=[dataset_name, email_config, format_config],
+                        args=[dataset_name, email_config_copy, format_config_copy],
                         id=job_id,
-                        name=f"Report_{dataset_name}"
+                        name=f"Report_{dataset_name}",
+                        replace_existing=True
                     )
                 
                 elif schedule_config['type'] == 'daily':
@@ -619,70 +580,40 @@ class ReportManager:
                         trigger='cron',
                         hour=schedule_config['hour'],
                         minute=schedule_config['minute'],
-                        args=[dataset_name, email_config, format_config],
+                        args=[dataset_name, email_config_copy, format_config_copy],
                         id=job_id,
-                        name=f"Report_{dataset_name}"
+                        name=f"Report_{dataset_name}",
+                        replace_existing=True
                     )
                 
                 elif schedule_config['type'] == 'weekly':
-                    # Handle multiple days
-                    days = schedule_config.get('days', [])
-                    if not days:
-                        raise ValueError("No days selected for weekly schedule")
-                    
-                    # Convert day indices to day names
-                    day_names = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
-                    day_of_week = ",".join([day_names[day] for day in days])
-                    
                     self.scheduler.add_job(
                         func=self.send_report,
                         trigger='cron',
-                        day_of_week=day_of_week,
+                        day_of_week=schedule_config['day'],
                         hour=schedule_config['hour'],
                         minute=schedule_config['minute'],
-                        args=[dataset_name, email_config, format_config],
+                        args=[dataset_name, email_config_copy, format_config_copy],
                         id=job_id,
-                        name=f"Report_{dataset_name}"
+                        name=f"Report_{dataset_name}",
+                        replace_existing=True
                     )
                 
                 elif schedule_config['type'] == 'monthly':
-                    # Handle special day options
-                    day_option = schedule_config.get('day_option', 'Specific Day')
-                    
-                    if day_option == 'Last Day':
-                        day = 'last'
-                    elif day_option == 'First Weekday':
-                        day = '1st mon-fri'
-                    elif day_option == 'Last Weekday':
-                        day = 'last mon-fri'
-                    else:
-                        day = str(schedule_config.get('day', 1))
-                    
-                    print(f"Scheduling monthly job for day: {day}")
                     self.scheduler.add_job(
                         func=self.send_report,
                         trigger='cron',
-                        day=day,
+                        day=schedule_config['day'],
                         hour=schedule_config['hour'],
                         minute=schedule_config['minute'],
-                        args=[dataset_name, email_config, format_config],
+                        args=[dataset_name, email_config_copy, format_config_copy],
                         id=job_id,
-                        name=f"Report_{dataset_name}"
+                        name=f"Report_{dataset_name}",
+                        replace_existing=True
                     )
                 
                 else:
                     raise ValueError(f"Invalid schedule type: {schedule_config['type']}")
-                
-                # Save schedule to file
-                schedules = self.load_schedules()
-                schedules[job_id] = {
-                    'dataset_name': dataset_name,
-                    'email_config': email_config,
-                    'schedule_config': schedule_config,
-                    'format_config': self._serialize_format_config(format_config),
-                    'created_at': datetime.now().isoformat()
-                }
-                self.save_schedules(schedules)
                 
                 print(f"Successfully scheduled report with ID: {job_id}")
                 return job_id
@@ -692,7 +623,7 @@ class ReportManager:
                 # Clean up if job was partially created
                 if self.scheduler.get_job(job_id):
                     self.scheduler.remove_job(job_id)
-                raise
+                return None
                 
         except Exception as e:
             print(f"Failed to schedule report: {str(e)}")
@@ -792,6 +723,50 @@ class ReportManager:
             print(f"Email config: {email_config}")
             print(f"Format config: {format_config}")
             
+            # Deserialize format_config if it's a string
+            if isinstance(format_config, str):
+                try:
+                    format_config = json.loads(format_config)
+                except Exception as format_error:
+                    print(f"Error parsing format_config: {str(format_error)}")
+                    format_config = None
+            
+            # Try to refresh dataset from Tableau if connection details are available
+            try:
+                # Get Tableau connection details from the database
+                with sqlite3.connect('data/tableau_data.db') as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT server_url, auth_method, credentials, site_name, workbook_name, view_ids, view_names
+                        FROM _internal_tableau_connections 
+                        WHERE dataset_name = ?
+                    """, (dataset_name,))
+                    connection_details = cursor.fetchone()
+                    
+                if connection_details:
+                    try:
+                        server_url, auth_method, credentials_json, site_name, workbook_name, view_ids_json, view_names_json = connection_details
+                        credentials = json.loads(credentials_json)
+                        view_ids = json.loads(view_ids_json)
+                        view_names = json.loads(view_names_json)
+                        
+                        # Authenticate with Tableau
+                        server = authenticate(server_url, auth_method, credentials, site_name)
+                        
+                        # Download fresh data
+                        if download_and_save_data(server, view_ids, workbook_name, view_names, dataset_name):
+                            print("Successfully refreshed dataset from Tableau")
+                        else:
+                            print("Failed to refresh dataset, will use saved data")
+                    except Exception as auth_error:
+                        print(f"Could not authenticate with Tableau: {str(auth_error)}")
+                        print("Will proceed with saved dataset")
+                else:
+                    print("No Tableau connection details found, will use saved dataset")
+            except Exception as db_error:
+                print(f"Database error checking connection details: {str(db_error)}")
+                print("Will proceed with saved dataset")
+            
             # Use class-level email settings if not provided in email_config
             email_config = email_config.copy()  # Create a copy to avoid modifying the original
             email_config.setdefault('smtp_server', self.smtp_server)
@@ -806,14 +781,16 @@ class ReportManager:
                 raise ValueError(f"Missing required email configuration fields: {', '.join(missing_fields)}")
             
             # Load dataset
-            with sqlite3.connect('data/tableau_data.db') as conn:
-                print("Loading dataset from database...")
-                df = pd.read_sql_query(f"SELECT * FROM '{dataset_name}'", conn)
-                print(f"Loaded {len(df)} rows from dataset")
-            
-            if df.empty:
-                print(f"No data found in dataset: {dataset_name}")
-                return
+            try:
+                with sqlite3.connect('data/tableau_data.db') as conn:
+                    print("Loading dataset from database...")
+                    df = pd.read_sql_query(f"SELECT * FROM '{dataset_name}'", conn)
+                    print(f"Loaded {len(df)} rows from dataset")
+                
+                if df.empty:
+                    raise ValueError(f"No data found in dataset: {dataset_name}")
+            except Exception as load_error:
+                raise Exception(f"Failed to load dataset: {str(load_error)}")
             
             # Get the message body or use default
             message_body = email_config.get('body', '').strip()
@@ -827,31 +804,79 @@ class ReportManager:
                 formatter = ReportFormatter()
                 
                 # Apply saved formatting settings
-                if format_config.get('page_size'):
-                    formatter.page_size = format_config['page_size']
-                if format_config.get('orientation'):
-                    formatter.orientation = format_config['orientation']
-                if format_config.get('margins'):
-                    formatter.margins = format_config['margins']
-                if format_config.get('title_style'):
-                    formatter.title_style = format_config['title_style']
-                if format_config.get('table_style'):
-                    formatter.table_style = format_config['table_style']
-                if format_config.get('chart_size'):
-                    formatter.chart_size = format_config['chart_size']
-                
-                # Get selected columns and other content settings
-                selected_columns = format_config.get('selected_columns', df.columns.tolist())
-                df_selected = df[selected_columns]
-                
-                # Generate formatted report
-                pdf_buffer = formatter.generate_report(
-                    df_selected,
-                    include_row_count=format_config.get('include_row_count', True),
-                    include_totals=format_config.get('include_totals', True),
-                    include_averages=format_config.get('include_averages', True),
-                    report_title=format_config.get('report_title', f"Report: {dataset_name}")
-                )
+                if isinstance(format_config, dict):
+                    if format_config.get('page_size'):
+                        formatter.page_size = format_config['page_size']
+                    if format_config.get('orientation'):
+                        formatter.orientation = format_config['orientation']
+                    if format_config.get('margins'):
+                        formatter.margins = format_config['margins']
+                    
+                    # Handle title style
+                    if format_config.get('title_style'):
+                        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+                        from reportlab.lib.colors import HexColor
+                        from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+                        
+                        styles = getSampleStyleSheet()
+                        title_style_data = format_config['title_style']
+                        
+                        if isinstance(title_style_data, dict):
+                            # Create new ParagraphStyle
+                            formatter.title_style = ParagraphStyle(
+                                'CustomTitle',
+                                parent=styles['Title'],
+                                fontName=title_style_data.get('fontName', 'Helvetica'),
+                                fontSize=title_style_data.get('fontSize', 24),
+                                alignment=title_style_data.get('alignment', TA_CENTER),
+                                textColor=HexColor(title_style_data.get('textColor', '#000000')),
+                                spaceAfter=title_style_data.get('spaceAfter', 30)
+                            )
+                    
+                    # Handle table style
+                    if format_config.get('table_style'):
+                        from reportlab.platypus import TableStyle
+                        table_style_data = format_config['table_style']
+                        
+                        if isinstance(table_style_data, list):
+                            # Convert commands to TableStyle
+                            commands = []
+                            for cmd in table_style_data:
+                                if isinstance(cmd, list) and len(cmd) == 4:
+                                    command_name = cmd[0]
+                                    start_pos = tuple(cmd[1]) if isinstance(cmd[1], list) else cmd[1]
+                                    end_pos = tuple(cmd[2]) if isinstance(cmd[2], list) else cmd[2]
+                                    value = cmd[3]
+                                    
+                                    # Handle color values
+                                    if isinstance(value, str) and value.startswith('#'):
+                                        value = HexColor(value)
+                                    elif isinstance(value, (int, float)):
+                                        value = float(value)
+                                    
+                                    commands.append((command_name, start_pos, end_pos, value))
+                            
+                            formatter.table_style = TableStyle(commands)
+                    
+                    if format_config.get('chart_size'):
+                        formatter.chart_size = format_config['chart_size']
+                    
+                    # Get selected columns and other content settings
+                    selected_columns = format_config.get('selected_columns', df.columns.tolist())
+                    df_selected = df[selected_columns]
+                    
+                    # Generate formatted report
+                    report_title = format_config.get('report_title', f"Report: {dataset_name}")
+                    pdf_buffer = formatter.generate_report(
+                        df_selected,
+                        include_row_count=format_config.get('include_row_count', True),
+                        include_totals=format_config.get('include_totals', True),
+                        include_averages=format_config.get('include_averages', True),
+                        report_title=report_title
+                    )
+                else:
+                    print("Format config is not a dictionary, using default formatting...")
+                    pdf_buffer = self.generate_pdf(df, f"Report: {dataset_name}")
             else:
                 # Use default formatting if no format_config provided
                 print("Using default formatting...")
@@ -1010,12 +1035,49 @@ _(Link expires in 24 hours)_"""
                     
                     for row in rows:
                         schedule_id = row[0]  # id column
+                        
+                        # Parse format_config if it exists
+                        format_config_str = row[5]
+                        try:
+                            format_config = json.loads(format_config_str) if format_config_str else None
+                            # Convert string representation of style objects back to proper format
+                            if format_config:
+                                if 'title_style' in format_config and isinstance(format_config['title_style'], str):
+                                    # Create a basic title style configuration
+                                    format_config['title_style'] = {
+                                        'fontName': 'Helvetica',
+                                        'fontSize': 24,
+                                        'alignment': 1,  # Center alignment
+                                        'textColor': '#000000',
+                                        'spaceAfter': 30
+                                    }
+                                if 'table_style' in format_config and isinstance(format_config['table_style'], str):
+                                    # Create a basic table style configuration
+                                    format_config['table_style'] = [
+                                        ['BACKGROUND', [0, 0], [-1, 0], '#2d5d7b'],
+                                        ['TEXTCOLOR', [0, 0], [-1, 0], '#ffffff'],
+                                        ['ALIGN', [0, 0], [-1, -1], 'LEFT'],
+                                        ['FONTNAME', [0, 0], [-1, 0], 'Helvetica-Bold'],
+                                        ['FONTSIZE', [0, 0], [-1, 0], 10],
+                                        ['BOTTOMPADDING', [0, 0], [-1, 0], 12],
+                                        ['BACKGROUND', [0, 1], [-1, -1], '#f5f5f5'],
+                                        ['TEXTCOLOR', [0, 1], [-1, -1], '#000000'],
+                                        ['FONTNAME', [0, 1], [-1, -1], 'Helvetica'],
+                                        ['FONTSIZE', [0, 1], [-1, -1], 8],
+                                        ['GRID', [0, 0], [-1, -1], 1, '#808080'],
+                                        ['ROWHEIGHT', [0, 0], [-1, -1], 20],
+                                        ['VALIGN', [0, 0], [-1, -1], 'MIDDLE']
+                                    ]
+                        except Exception as format_error:
+                            print(f"Error parsing format_config for schedule {schedule_id}: {str(format_error)}")
+                            format_config = None
+                        
                         schedules[schedule_id] = {
                             'dataset_name': row[1],
                             'schedule_type': row[2],
                             'schedule_config': json.loads(row[3]),
                             'email_config': json.loads(row[4]),
-                            'format_config': json.loads(row[5]) if row[5] else None,
+                            'format_config': format_config,
                             'created_at': row[6],
                             'last_run': row[7],
                             'next_run': row[8],
@@ -1085,207 +1147,66 @@ _(Link expires in 24 hours)_"""
             raise
     
     def load_saved_schedules(self):
-        """Load saved schedules into scheduler"""
+        """Load and activate saved schedules from database"""
         try:
-            schedules = self.load_schedules()
-            print(f"Loading {len(schedules)} saved schedules...")
-            
-            for job_id, schedule in schedules.items():
-                try:
-                    # Skip if job already exists
-                    if self.scheduler.get_job(job_id):
-                        print(f"Job {job_id} already exists in scheduler")
-                        continue
-                        
-                    # Deserialize format config if it exists
-                    format_config = self._deserialize_format_config(schedule.get('format_config'))
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM schedules WHERE status = 'active'")
+                schedules = cursor.fetchall()
+                
+                for schedule in schedules:
+                    schedule_id = schedule[0]
+                    dataset_name = schedule[1]
+                    schedule_config = json.loads(schedule[3])
+                    email_config = json.loads(schedule[4])
+                    format_config = json.loads(schedule[5]) if schedule[5] else None
                     
-                    # Get schedule configuration
-                    schedule_config = schedule['schedule_config']
-                    
-                    # Create the job based on schedule type
-                    if schedule_config['type'] == 'one-time':
-                        # Parse date and time
-                        schedule_date = datetime.strptime(
-                            f"{schedule_config['date']} {schedule_config['hour']:02d}:{schedule_config['minute']:02d}:00",
-                            "%Y-%m-%d %H:%M:%S"
+                    # Check if job already exists in scheduler
+                    if not self.scheduler.get_job(schedule_id):
+                        self.schedule_report(
+                            dataset_name,
+                            email_config,
+                            schedule_config,
+                            format_config,
+                            existing_job_id=schedule_id
                         )
-                        
-                        # Only add if the schedule date is in the future
-                        if schedule_date > datetime.now():
-                            self.scheduler.add_job(
-                                func=self.send_report,
-                                trigger='date',
-                                run_date=schedule_date,
-                                args=[schedule['dataset_name'], schedule['email_config'], format_config],
-                                id=job_id,
-                                name=f"Report_{schedule['dataset_name']}"
-                            )
-                            print(f"Loaded one-time schedule for {schedule_date}")
-                    
-                    elif schedule_config['type'] == 'daily':
-                        self.scheduler.add_job(
-                            func=self.send_report,
-                            trigger='cron',
-                            hour=schedule_config['hour'],
-                            minute=schedule_config['minute'],
-                            args=[schedule['dataset_name'], schedule['email_config'], format_config],
-                            id=job_id,
-                            name=f"Report_{schedule['dataset_name']}"
-                        )
-                        print(f"Loaded daily schedule for {schedule_config['hour']}:{schedule_config['minute']}")
-                    
-                    elif schedule_config['type'] == 'weekly':
-                        # Handle multiple days
-                        days = schedule_config.get('days', [])
-                        if not days:
-                            print(f"Warning: No days specified for weekly schedule {job_id}")
-                            continue
-                        
-                        # Convert day indices to day names
-                        day_names = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
-                        day_of_week = ",".join([day_names[day] for day in days])
-                        
-                        self.scheduler.add_job(
-                            func=self.send_report,
-                            trigger='cron',
-                            day_of_week=day_of_week,
-                            hour=schedule_config['hour'],
-                            minute=schedule_config['minute'],
-                            args=[schedule['dataset_name'], schedule['email_config'], format_config],
-                            id=job_id,
-                            name=f"Report_{schedule['dataset_name']}"
-                        )
-                        print(f"Loaded weekly schedule for days: {day_of_week}")
-                    
-                    elif schedule_config['type'] == 'monthly':
-                        # Handle special day options
-                        day_option = schedule_config.get('day_option', 'Specific Day')
-                        
-                        if day_option == 'Last Day':
-                            day = 'last'
-                        elif day_option == 'First Weekday':
-                            day = '1st mon-fri'
-                        elif day_option == 'Last Weekday':
-                            day = 'last mon-fri'
-                        else:
-                            day = str(schedule_config.get('day', 1))
-                        
-                        self.scheduler.add_job(
-                            func=self.send_report,
-                            trigger='cron',
-                            day=day,
-                            hour=schedule_config['hour'],
-                            minute=schedule_config['minute'],
-                            args=[schedule['dataset_name'], schedule['email_config'], format_config],
-                            id=job_id,
-                            name=f"Report_{schedule['dataset_name']}"
-                        )
-                        print(f"Loaded monthly schedule for day: {day}")
-                    
-                except Exception as e:
-                    print(f"Failed to load schedule {job_id}: {str(e)}")
-                    continue
-                    
-            print("Finished loading saved schedules")
-            
+                
+                print(f"Loaded {len(schedules)} saved schedules")
         except Exception as e:
             print(f"Error loading saved schedules: {str(e)}")
-            
+
     def get_active_schedules(self) -> dict:
-        """Get all active schedules"""
+        """Get all active schedules from the database"""
         try:
-            schedules = self.load_schedules()
-            active_schedules = {}
-            
-            for job_id, schedule in schedules.items():
-                # Get the job from the scheduler
-                job = self.scheduler.get_job(job_id)
-                if job:
-                    # Add next run time to schedule info
-                    schedule['next_run'] = job.next_run_time.isoformat() if job.next_run_time else None
-                    active_schedules[job_id] = schedule
-                    
-            print(f"Found {len(active_schedules)} active schedules")
-            return active_schedules
-            
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id, dataset_name, schedule_type, schedule_config, 
+                           email_config, format_config, created_at, last_run, 
+                           next_run, status 
+                    FROM schedules 
+                    WHERE status = 'active'
+                """)
+                rows = cursor.fetchall()
+                
+                schedules = {}
+                for row in rows:
+                    schedule_id = row[0]
+                    schedules[schedule_id] = {
+                        'dataset_name': row[1],
+                        'schedule_type': row[2],
+                        'schedule_config': json.loads(row[3]),
+                        'email_config': json.loads(row[4]),
+                        'format_config': json.loads(row[5]) if row[5] else None,
+                        'created_at': row[6],
+                        'last_run': row[7],
+                        'next_run': row[8],
+                        'status': row[9]
+                    }
+                
+                print(f"Found {len(schedules)} active schedules")
+                return schedules
+                
         except Exception as e:
             print(f"Error getting active schedules: {str(e)}")
-            return {}
-
-    def cleanup_expired_reports(self):
-        """Clean up expired report links and files"""
-        try:
-            current_time = datetime.now()
-            
-            for metadata_file in self.public_reports_dir.glob('*.json'):
-                try:
-                    with open(metadata_file, 'r') as f:
-                        metadata = json.load(f)
-                    
-                    expires_at = datetime.fromisoformat(metadata['expires_at'])
-                    if current_time > expires_at:
-                        # Remove the report file
-                        report_path = self.public_reports_dir / metadata_file.stem
-                        if report_path.exists():
-                            report_path.unlink()
-                        
-                        # Remove the metadata file
-                        metadata_file.unlink()
-                except Exception as e:
-                    print(f"Error cleaning up report {metadata_file}: {str(e)}")
-                    continue
-                    
-        except Exception as e:
-            print(f"Error in cleanup process: {str(e)}") 
-
-    def get_schedule_description(self, schedule_config: dict) -> str:
-        """Get a human-readable description of a schedule"""
-        try:
-            schedule_type = schedule_config.get('type')
-            if not schedule_type:
-                return "Invalid schedule"
-
-            hour = schedule_config.get('hour', 0)
-            minute = schedule_config.get('minute', 0)
-            time_str = f"{hour:02d}:{minute:02d}"
-
-            if schedule_type == 'one-time':
-                date = schedule_config.get('date')
-                if not date:
-                    return "Invalid one-time schedule"
-                return f"One time on {date} at {time_str}"
-
-            elif schedule_type == 'daily':
-                return f"Daily at {time_str}"
-
-            elif schedule_type == 'weekly':
-                days = schedule_config.get('days', [])
-                if not days:
-                    return "Invalid weekly schedule"
-                
-                # Convert day indices to names
-                day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-                day_str = ", ".join([day_names[day] for day in days])
-                return f"Weekly on {day_str} at {time_str}"
-
-            elif schedule_type == 'monthly':
-                day_option = schedule_config.get('day_option', 'Specific Day')
-                
-                if day_option == 'Last Day':
-                    return f"Monthly on the last day at {time_str}"
-                elif day_option == 'First Weekday':
-                    return f"Monthly on the first weekday at {time_str}"
-                elif day_option == 'Last Weekday':
-                    return f"Monthly on the last weekday at {time_str}"
-                else:
-                    day = schedule_config.get('day')
-                    if not day:
-                        return "Invalid monthly schedule"
-                    return f"Monthly on day {day} at {time_str}"
-
-            return "Unknown schedule type"
-
-        except Exception as e:
-            print(f"Error getting schedule description: {str(e)}")
-            return "Error in schedule" 
+            return {} 

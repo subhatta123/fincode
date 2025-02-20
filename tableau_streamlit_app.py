@@ -10,6 +10,7 @@ import base64
 import types
 import smtplib
 from dotenv import load_dotenv
+import pytz
 
 # Third-party imports
 import streamlit as st
@@ -164,12 +165,20 @@ def get_saved_datasets():
         with sqlite3.connect('data/tableau_data.db') as conn:
             cursor = conn.cursor()
             # Get list of all tables except system and internal tables
-            # For non-superadmin users, also exclude schedule_runs table
+            # For non-superadmin users, also exclude schedule_runs table and internal tables
             if st.session_state.user['role'] != 'superadmin':
                 cursor.execute("""
                     SELECT name FROM sqlite_master 
                     WHERE type='table' 
-                    AND name NOT IN ('users', 'organizations', 'schedules', 'sqlite_sequence', 'schedule_runs')
+                    AND name NOT IN (
+                        'users', 
+                        'organizations', 
+                        'schedules', 
+                        'sqlite_sequence', 
+                        'schedule_runs',
+                        '_internal_tableau_connections',
+                        'tableau_connections'
+                    )
                     AND name NOT LIKE 'sqlite_%'
                     AND name NOT LIKE '_internal_%'
                 """)
@@ -177,9 +186,13 @@ def get_saved_datasets():
                 cursor.execute("""
                     SELECT name FROM sqlite_master 
                     WHERE type='table' 
-                    AND name NOT IN ('users', 'organizations', 'schedules', 'sqlite_sequence')
+                    AND name NOT IN (
+                        'users', 
+                        'organizations', 
+                        'schedules', 
+                        'sqlite_sequence'
+                    )
                     AND name NOT LIKE 'sqlite_%'
-                    AND name NOT LIKE '_internal_%'
                 """)
             datasets = [row[0] for row in cursor.fetchall()]
             print(f"Found user datasets: {datasets}")  # Debug print
@@ -885,6 +898,32 @@ def download_and_save_data(server: TSC.Server, view_ids: list, workbook_name: st
                         df.to_sql(table_name, conn, if_exists='replace', index=False)
                         print(f"Successfully saved {len(df)} rows to database table: {table_name}")
                         data_downloaded = True
+                        
+                        # Save Tableau connection details
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            INSERT OR REPLACE INTO tableau_connections (
+                                dataset_name, server_url, auth_method, credentials, site_name,
+                                workbook_name, view_ids, view_names, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            table_name,
+                            server.server_url,
+                            'Personal Access Token' if hasattr(server.auth, 'token_name') else 'Username/Password',
+                            json.dumps({
+                                'token_name': server.auth.token_name if hasattr(server.auth, 'token_name') else None,
+                                'token_value': server.auth.personal_access_token if hasattr(server.auth, 'personal_access_token') else None,
+                                'username': server.auth.username if hasattr(server.auth, 'username') else None,
+                                'password': server.auth.password if hasattr(server.auth, 'password') else None
+                            }),
+                            server.site_id,
+                            workbook_name,
+                            json.dumps(view_ids),
+                            json.dumps(view_names),
+                            datetime.now().isoformat()
+                        ))
+                        conn.commit()
+                        print("Saved Tableau connection details")
                         break  # Successfully got data from one view, no need to try others
                         
                     except Exception as df_error:
@@ -1791,6 +1830,14 @@ def show_qa_page():
 
 def get_schedule_config(schedule_type):
     """Get schedule configuration based on type"""
+    # Add timezone selection at the top
+    timezone = st.selectbox(
+        "Select Timezone",
+        options=pytz.all_timezones,
+        index=pytz.all_timezones.index('UTC'),
+        help="Choose the timezone for this schedule"
+    )
+
     if schedule_type == "one-time":
         col1, col2 = st.columns(2)
         with col1:
@@ -1804,13 +1851,14 @@ def get_schedule_config(schedule_type):
         
         with col2:
             st.write("Schedule Summary")
-            st.info(f"Report will be sent once on: {date} at {hour:02d}:{minute:02d}")
+            st.info(f"Report will be sent once on: {date} at {hour:02d}:{minute:02d} {timezone}")
         
         return {
             'type': 'one-time',
             'date': date.strftime("%Y-%m-%d"),
             'hour': hour,
-            'minute': minute
+            'minute': minute,
+            'timezone': timezone
         }
     
     elif schedule_type == "daily":
@@ -1821,45 +1869,56 @@ def get_schedule_config(schedule_type):
         
         with col2:
             st.write("Schedule Summary")
-            st.info(f"Report will be sent daily at {hour:02d}:{minute:02d}")
+            st.info(f"Report will be sent daily at {hour:02d}:{minute:02d} {timezone}")
         
         return {
             'type': 'daily',
             'hour': hour,
-            'minute': minute
+            'minute': minute,
+            'timezone': timezone
         }
     
     elif schedule_type == "weekly":
+        st.write("Select Days of Week")
         days = []
         day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         
-        st.write("Select Days of Week")
+        # Create three columns for better layout
         col1, col2, col3 = st.columns(3)
         columns = [col1, col2, col3]
         
+        # Distribute days across columns with unique keys
         for i, day in enumerate(day_names):
             with columns[i // 3]:
-                if st.checkbox(day, key=f"schedule_day_{day}"):
+                if st.checkbox(day, key=f"schedule_day_{day}_{i}"):
                     days.append(i)
+        
+        # Show validation message if no days selected
+        if not days:
+            st.error("⚠️ Please select at least one day")
+        
+        # Show selected days summary
+        if days:
+            selected_days = [day_names[i] for i in days]
+            st.success(f"✅ Selected days: {', '.join(selected_days)}")
         
         col1, col2 = st.columns(2)
         with col1:
             hour = st.number_input("Hour (24-hour format)", min_value=0, max_value=23, value=8)
+        with col2:
             minute = st.number_input("Minute", min_value=0, max_value=59, value=0)
         
-        with col2:
-            st.write("Schedule Summary")
-            if days:
-                selected_days = [day_names[i] for i in days]
-                st.info(f"Report will be sent every {', '.join(selected_days)} at {hour:02d}:{minute:02d}")
-            else:
-                st.warning("Please select at least one day")
+        st.write("Schedule Summary")
+        if days:
+            days_str = ", ".join([day_names[d] for d in days])
+            st.info(f"Report will be sent every {days_str} at {hour:02d}:{minute:02d} {timezone}")
         
         return {
             'type': 'weekly',
             'days': days,
             'hour': hour,
-            'minute': minute
+            'minute': minute,
+            'timezone': timezone
         }
     
     else:  # monthly
@@ -1881,7 +1940,7 @@ def get_schedule_config(schedule_type):
         
         with col2:
             st.write("Schedule Summary")
-            time_str = f"{hour:02d}:{minute:02d}"
+            time_str = f"{hour:02d}:{minute:02d} {timezone}"
             if day_option == "Specific Day":
                 st.info(f"Report will be sent on day {day} of each month at {time_str}")
             else:
@@ -1892,7 +1951,8 @@ def get_schedule_config(schedule_type):
             'day': day,
             'day_option': day_option,
             'hour': hour,
-            'minute': minute
+            'minute': minute,
+            'timezone': timezone
         }
 
 def create_schedule(dataset_name: str, report_manager: ReportManager):
