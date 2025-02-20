@@ -3,6 +3,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter, landscape
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import io
@@ -349,68 +350,61 @@ class ReportManager:
         # Handle title style
         if 'title_style' in format_config:
             title_style = format_config['title_style']
-            # Convert color to hex string if it exists
-            text_color = getattr(title_style, 'textColor', None)
-            if text_color:
-                if hasattr(text_color, 'rgb'):
-                    # Convert RGB values to integers (0-255)
-                    rgb = [int(x * 255) if isinstance(x, float) else x for x in text_color.rgb()]
-                    text_color = '#{:02x}{:02x}{:02x}'.format(*rgb)
-                elif hasattr(text_color, 'hexval'):
-                    text_color = '#{:06x}'.format(text_color.hexval())
+            if isinstance(title_style, ParagraphStyle):
+                # Convert color to hex string if it exists
+                text_color = getattr(title_style, 'textColor', None)
+                if text_color:
+                    if hasattr(text_color, 'rgb'):
+                        # Convert RGB values to integers (0-255)
+                        rgb = [int(x * 255) if isinstance(x, float) else x for x in text_color.rgb()]
+                        text_color = '#{:02x}{:02x}{:02x}'.format(*rgb)
+                    elif hasattr(text_color, 'hexval'):
+                        text_color = '#{:06x}'.format(text_color.hexval())
+                    else:
+                        text_color = '#000000'
                 else:
                     text_color = '#000000'
-            else:
-                text_color = '#000000'
-                
-            serializable_config['title_style'] = {
-                'fontName': getattr(title_style, 'fontName', 'Helvetica'),
-                'fontSize': getattr(title_style, 'fontSize', 24),
-                'alignment': getattr(title_style, 'alignment', 1),  # 0=left, 1=center, 2=right
-                'textColor': text_color,
-                'spaceAfter': getattr(title_style, 'spaceAfter', 30)
-            }
+                    
+                serializable_config['title_style'] = {
+                    'fontName': getattr(title_style, 'fontName', 'Helvetica'),
+                    'fontSize': getattr(title_style, 'fontSize', 24),
+                    'alignment': getattr(title_style, 'alignment', 1),  # 0=left, 1=center, 2=right
+                    'textColor': text_color,
+                    'spaceAfter': getattr(title_style, 'spaceAfter', 30)
+                }
         
         # Handle table style
         if 'table_style' in format_config:
             table_style = format_config['table_style']
-            serializable_config['table_style'] = []
-            
-            # Get the commands from the TableStyle object
             if hasattr(table_style, 'commands'):
-                commands = table_style.commands
-            elif hasattr(table_style, '_cmds'):
-                commands = table_style._cmds
-            else:
-                commands = []
-                
-            for cmd in commands:
-                try:
-                    if len(cmd) != 4:
-                        continue
+                serializable_config['table_style'] = []
+                for cmd in table_style.commands:
+                    try:
+                        if len(cmd) != 4:
+                            continue
+                            
+                        cmd_name, start_pos, end_pos, value = cmd
                         
-                    cmd_name, start_pos, end_pos, value = cmd
-                    
-                    # Convert color objects to hex strings
-                    if hasattr(value, 'rgb'):
-                        rgb = [int(x * 255) if isinstance(x, float) else x for x in value.rgb()]
-                        value = '#{:02x}{:02x}{:02x}'.format(*rgb)
-                    elif hasattr(value, 'hexval'):
-                        value = '#{:06x}'.format(value.hexval())
-                    elif isinstance(value, (int, float)):
-                        value = float(value)
-                    
-                    # Convert tuples to lists for JSON serialization
-                    serialized_cmd = [
-                        cmd_name,
-                        list(start_pos) if isinstance(start_pos, tuple) else start_pos,
-                        list(end_pos) if isinstance(end_pos, tuple) else end_pos,
-                        value
-                    ]
-                    serializable_config['table_style'].append(serialized_cmd)
-                except Exception as e:
-                    print(f"Error serializing table style command {cmd}: {str(e)}")
-                    continue
+                        # Convert color objects to hex strings
+                        if hasattr(value, 'rgb'):
+                            rgb = [int(x * 255) if isinstance(x, float) else x for x in value.rgb()]
+                            value = '#{:02x}{:02x}{:02x}'.format(*rgb)
+                        elif hasattr(value, 'hexval'):
+                            value = '#{:06x}'.format(value.hexval())
+                        elif isinstance(value, (int, float)):
+                            value = float(value)
+                        
+                        # Convert tuples to lists for JSON serialization
+                        serialized_cmd = [
+                            cmd_name,
+                            list(start_pos) if isinstance(start_pos, tuple) else start_pos,
+                            list(end_pos) if isinstance(end_pos, tuple) else end_pos,
+                            value
+                        ]
+                        serializable_config['table_style'].append(serialized_cmd)
+                    except Exception as e:
+                        print(f"Error serializing table style command {cmd}: {str(e)}")
+                        continue
         
         return serializable_config
     
