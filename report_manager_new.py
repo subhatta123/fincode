@@ -179,20 +179,20 @@ class ReportManager:
         doc = SimpleDocTemplate(buffer, pagesize=landscape(letter))
         elements = []
         
-        # Add title
+        # Add title with proper style creation
         styles = getSampleStyleSheet()
         title_style = ParagraphStyle(
-            'CustomTitle',
+            name='CustomTitle',  # Added required 'name' parameter
             parent=styles['Title'],
             fontSize=24,
             spaceAfter=30
         )
-        elements.append(Paragraph(title, title_style))
+        elements.append(Paragraph(str(title), title_style))  # Ensure title is string
         
         # Add timestamp
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         timestamp_style = ParagraphStyle(
-            'Timestamp',
+            name='Timestamp',  # Added required 'name' parameter
             parent=styles['Normal'],
             fontSize=10,
             textColor=colors.gray,
@@ -202,7 +202,7 @@ class ReportManager:
         
         # Add summary statistics
         summary_style = ParagraphStyle(
-            'Summary',
+            name='Summary',  # Added required 'name' parameter
             parent=styles['Normal'],
             fontSize=12,
             spaceAfter=20
