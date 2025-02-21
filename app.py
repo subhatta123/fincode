@@ -21,9 +21,6 @@ def run_streamlit():
         streamlit_cmd = f"streamlit run tableau_streamlit_app.py --server.port {port} --server.address 0.0.0.0"
         process = subprocess.Popen(streamlit_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         print("Streamlit process started")
-        stdout, stderr = process.communicate()
-        if process.returncode != 0:
-            print(f"Streamlit process failed: {stderr.decode()}")
         return process
     except Exception as e:
         print(f"Error starting Streamlit: {str(e)}")
@@ -31,19 +28,24 @@ def run_streamlit():
 
 # Initialize streamlit process
 streamlit_process = None
+streamlit_initialized = False
 
-@app.before_first_request
+@app.before_request
 def initialize():
-    global streamlit_process
-    if not streamlit_process:
+    global streamlit_process, streamlit_initialized
+    if not streamlit_initialized:
         print("Starting Streamlit process...")
         streamlit_process = run_streamlit()
         time.sleep(10)  # Give Streamlit more time to start
+        streamlit_initialized = True
 
 # Health check endpoint
 @app.route('/health')
 def health_check():
-    return {'status': 'healthy'}, 200
+    global streamlit_process
+    if streamlit_process and streamlit_process.poll() is None:
+        return {'status': 'healthy'}, 200
+    return {'status': 'initializing'}, 503
 
 # Serve static files
 @app.route('/static/reports/<path:filename>')
@@ -84,19 +86,34 @@ def home():
             .container {
                 text-align: center;
             }
+            .status {
+                margin-top: 20px;
+                color: #666;
+            }
         </style>
         <script>
+            let attempts = 0;
+            const maxAttempts = 30; // 60 seconds total (2s * 30)
+            
             function checkStreamlit() {
                 fetch('/health')
                     .then(response => response.json())
                     .then(data => {
+                        attempts++;
                         if (data.status === 'healthy') {
                             window.location.href = '""" + get_streamlit_url() + """';
+                        } else if (attempts < maxAttempts) {
+                            document.getElementById('status').textContent = `Initializing... (Attempt ${attempts}/${maxAttempts})`;
+                            setTimeout(checkStreamlit, 2000);
+                        } else {
+                            document.getElementById('status').textContent = 'Failed to start application. Please refresh the page.';
                         }
                     })
                     .catch(error => {
                         console.error('Error:', error);
-                        setTimeout(checkStreamlit, 2000);
+                        if (attempts < maxAttempts) {
+                            setTimeout(checkStreamlit, 2000);
+                        }
                     });
             }
             setTimeout(checkStreamlit, 2000);
@@ -107,6 +124,7 @@ def home():
             <div class="loader"></div>
             <h2>Loading Tableau Data Reporter...</h2>
             <p>Please wait while we initialize the application.</p>
+            <p id="status" class="status">Initializing...</p>
         </div>
     </body>
     </html>
