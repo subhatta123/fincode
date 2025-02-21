@@ -15,4 +15,6 @@ python-docx==0.8.11
 pytz==2023.3
 twilio==8.10.0
 apscheduler==3.10.4
-SQLAlchemy==2.0.25 
+SQLAlchemy==2.0.25
+gunicorn==21.2.0
+Flask==2.3.3 
