@@ -12,14 +12,19 @@ def run_streamlit():
     streamlit_cmd = f"streamlit run tableau_streamlit_app.py --server.port 8501 --server.address 0.0.0.0"
     subprocess.Popen(streamlit_cmd, shell=True)
 
-# Start Streamlit when the Flask app starts
-@app.before_first_request
-def start_streamlit():
-    thread = threading.Thread(target=run_streamlit)
-    thread.daemon = True
-    thread.start()
-    # Give Streamlit time to start
-    time.sleep(5)
+# Initialize streamlit on first request
+streamlit_started = False
+
+@app.before_request
+def start_streamlit_if_needed():
+    global streamlit_started
+    if not streamlit_started:
+        thread = threading.Thread(target=run_streamlit)
+        thread.daemon = True
+        thread.start()
+        # Give Streamlit time to start
+        time.sleep(5)
+        streamlit_started = True
 
 # Health check endpoint
 @app.route('/health')
@@ -34,7 +39,9 @@ def serve_report(filename):
 # Main route - redirect to Streamlit
 @app.route('/')
 def home():
-    return f'<meta http-equiv="refresh" content="0;URL=\'http://localhost:8501\'" />'
+    # Get the current host from the environment or default to localhost
+    host = os.environ.get('RENDER_EXTERNAL_URL', 'http://localhost:8501')
+    return f'<meta http-equiv="refresh" content="0;URL=\'{host}\'" />'
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
