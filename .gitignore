@@ -53,8 +53,4 @@ logs/
 
 # System Files
 .DS_Store
-Thumbs.db
-
-# Render specific
-/tmp/
-.render/ 
+Thumbs.db 
