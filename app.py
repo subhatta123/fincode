@@ -7,9 +7,11 @@ import sqlite3
 from user_management import UserManagement
 from report_manager_new import ReportManager
 from data_analyzer import DataAnalyzer
+from tableau_utils import authenticate, get_workbooks, download_and_save_data, generate_table_name
 import pytz
 from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
+import pandas as pd
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)  # For session management
