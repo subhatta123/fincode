@@ -24,6 +24,7 @@ app.secret_key = os.urandom(24)  # For session management
 # Initialize managers
 user_manager = UserManagement()
 report_manager = ReportManager()
+report_manager.base_url = os.getenv('BASE_URL', 'http://localhost:8501')
 data_analyzer = DataAnalyzer()
 report_formatter = ReportFormatter()
 
