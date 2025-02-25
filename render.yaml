@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: tableau-data-reporter
+    env: python
+    region: ohio
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run tableau_streamlit_app.py --server.port $PORT --server.address 0.0.0.0
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9.0
+      - key: SMTP_SERVER
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SENDER_EMAIL
+        sync: false
+      - key: SENDER_PASSWORD
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_WHATSAPP_NUMBER
+        sync: false
+      - key: BASE_URL
+        sync: false
+      - key: RENDER
+        value: true
+    disk:
+      name: data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1 
