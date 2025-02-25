@@ -1072,6 +1072,309 @@ def download_views():
         flash(f'Error downloading data: {str(e)}')
         return redirect(url_for('select_views', workbook_id=workbook_id))
 
+@app.route('/schedule-reports')
+@login_required
+def schedule_reports():
+    datasets = get_saved_datasets()
+    return render_template_string('''
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Schedule Reports - Tableau Data Reporter</title>
+            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+            <style>
+                body { padding: 20px; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="row justify-content-center">
+                    <div class="col-md-10">
+                        <div class="d-flex justify-content-between align-items-center mb-4">
+                            <h1>📅 Schedule Reports</h1>
+                            <a href="{{ url_for('home') }}" class="btn btn-outline-primary">← Back</a>
+                        </div>
+                        
+                        {% if not datasets %}
+                            <div class="alert alert-info">
+                                No datasets available. Please connect to Tableau and download some data first.
+                            </div>
+                        {% else %}
+                            <div class="row">
+                                {% for dataset in datasets %}
+                                    <div class="col-md-6 mb-4">
+                                        <div class="card">
+                                            <div class="card-body">
+                                                <h5 class="card-title">📊 {{ dataset }}</h5>
+                                                <p class="text-muted">Rows: {{ dataset_rows[dataset] }}</p>
+                                                <a href="{{ url_for('schedule_dataset', dataset=dataset) }}" 
+                                                   class="btn btn-primary">Schedule Report</a>
+                                            </div>
+                                        </div>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </body>
+        </html>
+    ''', datasets=datasets, dataset_rows={d: get_dataset_row_count(d) for d in datasets})
+
+@app.route('/schedule-dataset/<dataset>')
+@login_required
+def schedule_dataset(dataset):
+    return render_template_string('''
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Schedule Dataset Report - Tableau Data Reporter</title>
+            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+            <style>
+                body { padding: 20px; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="row justify-content-center">
+                    <div class="col-md-8">
+                        <div class="d-flex justify-content-between align-items-center mb-4">
+                            <h1>📅 Schedule Report</h1>
+                            <a href="{{ url_for('schedule_reports') }}" class="btn btn-outline-primary">← Back</a>
+                        </div>
+                        
+                        <div class="card mb-4">
+                            <div class="card-body">
+                                <h5>Dataset: {{ dataset }}</h5>
+                                <p class="text-muted mb-0">Total rows: {{ row_count }}</p>
+                            </div>
+                        </div>
+                        
+                        <div class="card">
+                            <div class="card-body">
+                                <form id="scheduleForm" onsubmit="return submitSchedule(event)">
+                                    <input type="hidden" name="dataset" value="{{ dataset }}">
+                                    
+                                    <div class="mb-3">
+                                        <label class="form-label">Schedule Type</label>
+                                        <select class="form-select" name="schedule_type" onchange="updateScheduleFields()" required>
+                                            <option value="one-time">One Time</option>
+                                            <option value="daily">Daily</option>
+                                            <option value="weekly">Weekly</option>
+                                            <option value="monthly">Monthly</option>
+                                        </select>
+                                    </div>
+                                    
+                                    <div id="oneTimeFields">
+                                        <div class="mb-3">
+                                            <label class="form-label">Date</label>
+                                            <input type="date" class="form-control" name="date" 
+                                                   min="{{ today }}" required>
+                                        </div>
+                                    </div>
+                                    
+                                    <div id="weeklyFields" style="display: none;">
+                                        <div class="mb-3">
+                                            <label class="form-label">Days of Week</label>
+                                            <div class="form-check">
+                                                <input type="checkbox" class="form-check-input" name="days[]" value="0">
+                                                <label class="form-check-label">Monday</label>
+                                            </div>
+                                            <div class="form-check">
+                                                <input type="checkbox" class="form-check-input" name="days[]" value="1">
+                                                <label class="form-check-label">Tuesday</label>
+                                            </div>
+                                            <div class="form-check">
+                                                <input type="checkbox" class="form-check-input" name="days[]" value="2">
+                                                <label class="form-check-label">Wednesday</label>
+                                            </div>
+                                            <div class="form-check">
+                                                <input type="checkbox" class="form-check-input" name="days[]" value="3">
+                                                <label class="form-check-label">Thursday</label>
+                                            </div>
+                                            <div class="form-check">
+                                                <input type="checkbox" class="form-check-input" name="days[]" value="4">
+                                                <label class="form-check-label">Friday</label>
+                                            </div>
+                                            <div class="form-check">
+                                                <input type="checkbox" class="form-check-input" name="days[]" value="5">
+                                                <label class="form-check-label">Saturday</label>
+                                            </div>
+                                            <div class="form-check">
+                                                <input type="checkbox" class="form-check-input" name="days[]" value="6">
+                                                <label class="form-check-label">Sunday</label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div id="monthlyFields" style="display: none;">
+                                        <div class="mb-3">
+                                            <label class="form-label">Day of Month</label>
+                                            <select class="form-select" name="day_option">
+                                                <option value="specific">Specific Day</option>
+                                                <option value="last">Last Day</option>
+                                                <option value="first_weekday">First Weekday</option>
+                                                <option value="last_weekday">Last Weekday</option>
+                                            </select>
+                                        </div>
+                                        <div id="specificDayField" class="mb-3">
+                                            <label class="form-label">Day</label>
+                                            <input type="number" class="form-control" name="day" 
+                                                   min="1" max="31" value="1">
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label class="form-label">Hour (24-hour)</label>
+                                                <input type="number" class="form-control" name="hour" 
+                                                       min="0" max="23" value="0" required>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label class="form-label">Minute</label>
+                                                <input type="number" class="form-control" name="minute" 
+                                                       min="0" max="59" value="0" required>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="mb-3">
+                                        <label class="form-label">Timezone</label>
+                                        <select class="form-select" name="timezone" required>
+                                            {% for tz in timezones %}
+                                                <option value="{{ tz }}"
+                                                        {% if tz == 'UTC' %}selected{% endif %}>
+                                                    {{ tz }}
+                                                </option>
+                                            {% endfor %}
+                                        </select>
+                                    </div>
+                                    
+                                    <hr>
+                                    
+                                    <div class="mb-3">
+                                        <label class="form-label">Recipients (comma-separated emails)</label>
+                                        <input type="text" class="form-control" name="recipients" 
+                                               placeholder="email1@example.com, email2@example.com" required>
+                                    </div>
+                                    
+                                    <div class="mb-3">
+                                        <label class="form-label">Message (optional)</label>
+                                        <textarea class="form-control" name="message" rows="3"
+                                                  placeholder="Optional message to include in the email"></textarea>
+                                    </div>
+                                    
+                                    <button type="submit" class="btn btn-primary">Create Schedule</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <script>
+                function updateScheduleFields() {
+                    const scheduleType = document.querySelector('select[name="schedule_type"]').value;
+                    
+                    document.getElementById('oneTimeFields').style.display = 
+                        scheduleType === 'one-time' ? 'block' : 'none';
+                    document.getElementById('weeklyFields').style.display = 
+                        scheduleType === 'weekly' ? 'block' : 'none';
+                    document.getElementById('monthlyFields').style.display = 
+                        scheduleType === 'monthly' ? 'block' : 'none';
+                    
+                    // Update required attributes
+                    document.querySelector('input[name="date"]').required = 
+                        scheduleType === 'one-time';
+                }
+                
+                function submitSchedule(event) {
+                    event.preventDefault();
+                    const form = event.target;
+                    const formData = new FormData(form);
+                    
+                    // Get selected days for weekly schedule
+                    if (formData.get('schedule_type') === 'weekly') {
+                        const days = Array.from(document.querySelectorAll('input[name="days[]"]:checked'))
+                            .map(cb => parseInt(cb.value));
+                        if (days.length === 0) {
+                            alert('Please select at least one day for weekly schedule');
+                            return false;
+                        }
+                        formData.delete('days[]');
+                        formData.append('days', JSON.stringify(days));
+                    }
+                    
+                    fetch('/api/schedules', {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            window.location.href = "{{ url_for('schedule_reports') }}";
+                        } else {
+                            alert(data.error || 'Failed to create schedule');
+                        }
+                    });
+                    
+                    return false;
+                }
+                
+                // Initialize fields on load
+                document.addEventListener('DOMContentLoaded', updateScheduleFields);
+            </script>
+        </body>
+        </html>
+    ''', dataset=dataset, row_count=get_dataset_row_count(dataset),
+        today=datetime.now().strftime('%Y-%m-%d'),
+        timezones=pytz.all_timezones)
+
+@app.route('/api/schedules', methods=['POST'])
+@login_required
+def create_schedule_api():
+    try:
+        dataset = request.form.get('dataset')
+        schedule_type = request.form.get('schedule_type')
+        timezone = request.form.get('timezone', 'UTC')
+        
+        # Parse schedule configuration
+        schedule_config = {
+            'type': schedule_type,
+            'hour': int(request.form.get('hour', 0)),
+            'minute': int(request.form.get('minute', 0)),
+            'timezone': timezone
+        }
+        
+        if schedule_type == 'one-time':
+            schedule_config['date'] = request.form.get('date')
+        elif schedule_type == 'weekly':
+            schedule_config['days'] = json.loads(request.form.get('days', '[]'))
+        elif schedule_type == 'monthly':
+            schedule_config['day_option'] = request.form.get('day_option')
+            if schedule_config['day_option'] == 'specific':
+                schedule_config['day'] = int(request.form.get('day', 1))
+        
+        # Parse email configuration
+        email_config = {
+            'recipients': [email.strip() for email in request.form.get('recipients', '').split(',')],
+            'body': request.form.get('message', '').strip(),
+            'format': 'PDF'
+        }
+        
+        # Create schedule
+        job_id = report_manager.schedule_report(dataset, email_config, schedule_config)
+        if job_id:
+            return jsonify({'success': True, 'job_id': job_id})
+        return jsonify({'success': False, 'error': 'Failed to create schedule'})
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8501))
     app.run(host='0.0.0.0', port=port) 
