@@ -7,11 +7,16 @@ import sqlite3
 from user_management import UserManagement
 from report_manager_new import ReportManager
 from data_analyzer import DataAnalyzer
+from report_formatter_new import ReportFormatter
 from tableau_utils import authenticate, get_workbooks, download_and_save_data, generate_table_name
 import pytz
 from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
 import pandas as pd
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)  # For session management
@@ -20,6 +25,7 @@ app.secret_key = os.urandom(24)  # For session management
 user_manager = UserManagement()
 report_manager = ReportManager()
 data_analyzer = DataAnalyzer()
+report_formatter = ReportFormatter()
 
 # Login required decorator
 def login_required(f):
@@ -303,6 +309,314 @@ def normal_user_dashboard():
     ''', datasets=datasets, 
         dataset_previews={d: get_dataset_preview_html(d) for d in datasets},
         dataset_rows={d: get_dataset_row_count(d) for d in datasets})
+
+@app.route('/power-user')
+@login_required
+@role_required(['power'])
+def power_user_dashboard():
+    datasets = get_saved_datasets()
+    return render_template_string('''
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Power User Dashboard - Tableau Data Reporter</title>
+            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+            <style>
+                .sidebar {
+                    position: fixed;
+                    top: 0;
+                    bottom: 0;
+                    left: 0;
+                    z-index: 100;
+                    padding: 48px 0 0;
+                    box-shadow: inset -1px 0 0 rgba(0, 0, 0, .1);
+                }
+                .main {
+                    margin-left: 240px;
+                    padding: 20px;
+                }
+            </style>
+        </head>
+        <body>
+            <nav class="col-md-3 col-lg-2 d-md-block bg-light sidebar">
+                <div class="position-sticky pt-3">
+                    <div class="px-3">
+                        <h5>👤 Power User Profile</h5>
+                        <p><strong>Username:</strong> {{ session.user.username }}</p>
+                        <p><strong>Role:</strong> {{ session.user.role }}</p>
+                        <p><strong>Organization:</strong> {{ session.user.organization_name or 'Not assigned' }}</p>
+                    </div>
+                    <hr>
+                    <div class="px-3">
+                        <a href="{{ url_for('tableau_connect') }}" class="btn btn-primary w-100 mb-2">🔌 Connect to Tableau</a>
+                        <a href="{{ url_for('schedule_reports') }}" class="btn btn-primary w-100 mb-2">📅 Schedule Reports</a>
+                        <a href="{{ url_for('qa_page') }}" class="btn btn-primary w-100 mb-2">❓ Ask Questions</a>
+                        <hr>
+                        <a href="{{ url_for('logout') }}" class="btn btn-secondary w-100">🚪 Logout</a>
+                    </div>
+                </div>
+            </nav>
+            
+            <main class="main">
+                <h1>💾 Saved Datasets</h1>
+                {% if not datasets %}
+                    <div class="alert alert-info">No datasets available. Connect to Tableau to import data.</div>
+                {% else %}
+                    <div class="row">
+                        {% for dataset in datasets %}
+                            <div class="col-md-6 mb-4">
+                                <div class="card">
+                                    <div class="card-body">
+                                        <h5 class="card-title">📊 {{ dataset }}</h5>
+                                        <div class="table-responsive">
+                                            {{ dataset_previews[dataset] | safe }}
+                                        </div>
+                                        <p class="text-muted">Total rows: {{ dataset_rows[dataset] }}</p>
+                                        <div class="btn-group">
+                                            <a href="{{ url_for('schedule_dataset', dataset=dataset) }}" 
+                                               class="btn btn-primary">📅 Schedule</a>
+                                            <a href="{{ url_for('qa_page', dataset=dataset) }}"
+                                               class="btn btn-info">❓ Ask Questions</a>
+                                            <button onclick="deleteDataset('{{ dataset }}')" 
+                                                    class="btn btn-danger">🗑️ Delete</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            </main>
+            
+            <script>
+                function deleteDataset(dataset) {
+                    if (confirm('Are you sure you want to delete this dataset?')) {
+                        fetch(`/api/datasets/${dataset}`, { method: 'DELETE' })
+                            .then(response => response.json())
+                            .then(data => {
+                                if (data.success) {
+                                    location.reload();
+                                } else {
+                                    alert('Failed to delete dataset');
+                                }
+                            });
+                    }
+                }
+            </script>
+        </body>
+        </html>
+    ''', datasets=datasets, 
+        dataset_previews={d: get_dataset_preview_html(d) for d in datasets},
+        dataset_rows={d: get_dataset_row_count(d) for d in datasets})
+
+@app.route('/qa-page')
+@login_required
+@role_required(['power', 'superadmin'])
+def qa_page():
+    dataset = request.args.get('dataset')
+    datasets = get_saved_datasets()
+    
+    return render_template_string('''
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Ask Questions - Tableau Data Reporter</title>
+            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+            <style>
+                body { padding: 20px; }
+                .chat-container {
+                    height: 400px;
+                    overflow-y: auto;
+                    border: 1px solid #dee2e6;
+                    border-radius: 0.25rem;
+                    padding: 1rem;
+                    margin-bottom: 1rem;
+                }
+                .chat-message {
+                    margin-bottom: 1rem;
+                    padding: 0.5rem;
+                    border-radius: 0.25rem;
+                }
+                .user-message {
+                    background-color: #e9ecef;
+                    margin-left: 20%;
+                }
+                .assistant-message {
+                    background-color: #f8f9fa;
+                    margin-right: 20%;
+                }
+                #visualization {
+                    width: 100%;
+                    height: 400px;
+                    margin-top: 1rem;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="row justify-content-center">
+                    <div class="col-md-10">
+                        <div class="d-flex justify-content-between align-items-center mb-4">
+                            <h1>❓ Ask Questions About Your Data</h1>
+                            <a href="{{ url_for('home') }}" class="btn btn-outline-primary">← Back</a>
+                        </div>
+                        
+                        <div class="card mb-4">
+                            <div class="card-body">
+                                <form id="questionForm">
+                                    <div class="mb-3">
+                                        <label class="form-label">Select Dataset</label>
+                                        <select class="form-select" name="dataset" required>
+                                            <option value="">Choose a dataset...</option>
+                                            {% for ds in datasets %}
+                                                <option value="{{ ds }}"
+                                                        {% if ds == dataset %}selected{% endif %}>
+                                                    {{ ds }}
+                                                </option>
+                                            {% endfor %}
+                                        </select>
+                                    </div>
+                                    
+                                    <div class="mb-3">
+                                        <label class="form-label">Your Question</label>
+                                        <div class="input-group">
+                                            <input type="text" class="form-control" name="question"
+                                                   placeholder="Ask a question about your data..."
+                                                   required>
+                                            <button type="submit" class="btn btn-primary">
+                                                Ask Question
+                                            </button>
+                                        </div>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="card">
+                                    <div class="card-body">
+                                        <h5 class="card-title">Conversation</h5>
+                                        <div id="chatContainer" class="chat-container"></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="card">
+                                    <div class="card-body">
+                                        <h5 class="card-title">Visualization</h5>
+                                        <div id="visualization"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+            <script>
+                const questionForm = document.getElementById('questionForm');
+                const chatContainer = document.getElementById('chatContainer');
+                
+                questionForm.addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    
+                    const formData = new FormData(questionForm);
+                    const dataset = formData.get('dataset');
+                    const question = formData.get('question');
+                    
+                    // Add user message to chat
+                    addMessage(question, 'user');
+                    
+                    try {
+                        const response = await fetch('/api/ask-question', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                dataset: dataset,
+                                question: question
+                            })
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (data.success) {
+                            // Add assistant's response to chat
+                            addMessage(data.answer, 'assistant');
+                            
+                            // Update visualization if provided
+                            if (data.visualization) {
+                                Plotly.newPlot('visualization', data.visualization);
+                            }
+                        } else {
+                            addMessage('Error: ' + data.error, 'assistant');
+                        }
+                    } catch (error) {
+                        addMessage('Error: Failed to get response', 'assistant');
+                    }
+                    
+                    // Clear question input
+                    questionForm.querySelector('input[name="question"]').value = '';
+                });
+                
+                function addMessage(message, type) {
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = `chat-message ${type}-message`;
+                    messageDiv.textContent = message;
+                    chatContainer.appendChild(messageDiv);
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                }
+                
+                // If dataset is provided in URL, simulate click on Ask Questions button
+                const urlParams = new URLSearchParams(window.location.search);
+                const datasetParam = urlParams.get('dataset');
+                if (datasetParam) {
+                    const datasetSelect = questionForm.querySelector('select[name="dataset"]');
+                    if (datasetSelect) {
+                        datasetSelect.value = datasetParam;
+                    }
+                }
+            </script>
+        </body>
+        </html>
+    ''', datasets=datasets, dataset=dataset)
+
+@app.route('/api/ask-question', methods=['POST'])
+@login_required
+@role_required(['power', 'superadmin'])
+def ask_question_api():
+    try:
+        data = request.json
+        dataset = data.get('dataset')
+        question = data.get('question')
+        
+        if not dataset or not question:
+            return jsonify({
+                'success': False,
+                'error': 'Dataset and question are required'
+            })
+        
+        # Load dataset
+        with sqlite3.connect('data/tableau_data.db') as conn:
+            df = pd.read_sql_query(f"SELECT * FROM '{dataset}'", conn)
+        
+        # Get answer and visualization
+        answer, visualization = data_analyzer.ask_question(df, question)
+        
+        return jsonify({
+            'success': True,
+            'answer': answer,
+            'visualization': visualization.to_dict() if visualization else None
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
 
 def get_dataset_preview_html(dataset_name):
     """Get HTML preview of dataset"""
@@ -1259,15 +1573,34 @@ def schedule_dataset(dataset):
                                     <hr>
                                     
                                     <div class="mb-3">
-                                        <label class="form-label">Recipients (comma-separated emails)</label>
+                                        <label class="form-label">Report Format</label>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="radio" name="format" value="PDF" id="formatPDF" checked>
+                                            <label class="form-check-label" for="formatPDF">PDF</label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="radio" name="format" value="CSV" id="formatCSV">
+                                            <label class="form-check-label" for="formatCSV">CSV</label>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="mb-3">
+                                        <label class="form-label">Email Recipients (comma-separated)</label>
                                         <input type="text" class="form-control" name="recipients" 
                                                placeholder="email1@example.com, email2@example.com" required>
                                     </div>
                                     
                                     <div class="mb-3">
+                                        <label class="form-label">WhatsApp Recipients (comma-separated)</label>
+                                        <input type="text" class="form-control" name="whatsapp_recipients" 
+                                               placeholder="+1234567890, +0987654321">
+                                        <small class="text-muted">Include country code (e.g., +1 for US)</small>
+                                    </div>
+                                    
+                                    <div class="mb-3">
                                         <label class="form-label">Message (optional)</label>
                                         <textarea class="form-control" name="message" rows="3"
-                                                  placeholder="Optional message to include in the email"></textarea>
+                                                  placeholder="Optional message to include in the email and WhatsApp"></textarea>
                                     </div>
                                     
                                     <button type="submit" class="btn btn-primary">Create Schedule</button>
@@ -1310,6 +1643,12 @@ def schedule_dataset(dataset):
                         formData.delete('days[]');
                         formData.append('days', JSON.stringify(days));
                     }
+                    
+                    // Get WhatsApp recipients
+                    const whatsappRecipients = formData.get('whatsapp_recipients')
+                        .split(',')
+                        .map(num => num.trim())
+                        .filter(num => num);
                     
                     fetch('/api/schedules', {
                         method: 'POST',
@@ -1364,8 +1703,13 @@ def create_schedule_api():
         # Parse email configuration
         email_config = {
             'recipients': [email.strip() for email in request.form.get('recipients', '').split(',')],
+            'whatsapp_recipients': [num.strip() for num in request.form.get('whatsapp_recipients', '').split(',') if num.strip()],
             'body': request.form.get('message', '').strip(),
-            'format': 'PDF'
+            'format': request.form.get('format', 'PDF'),
+            'smtp_server': os.getenv('SMTP_SERVER'),
+            'smtp_port': int(os.getenv('SMTP_PORT', 587)),
+            'sender_email': os.getenv('SENDER_EMAIL'),
+            'sender_password': os.getenv('SENDER_PASSWORD')
         }
         
         # Create schedule

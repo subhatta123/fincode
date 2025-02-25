@@ -35,6 +35,49 @@ def authenticate(server_url: str, auth_method: str, credentials: dict, site_name
         print(f"Authentication failed: {str(e)}")
         raise
 
+def get_workbooks(server: TSC.Server) -> list:
+    """Get list of workbooks from Tableau Server"""
+    try:
+        # Get all workbooks
+        workbooks = []
+        pagination_item = TSC.Pager(page_size=100)
+        
+        all_workbooks, pagination_item = server.workbooks.get(req_options=pagination_item)
+        
+        for workbook in all_workbooks:
+            # Get workbook details
+            server.workbooks.populate_views(workbook)
+            server.workbooks.populate_preview_image(workbook)
+            
+            # Get project name
+            project = None
+            try:
+                project = server.projects.get_by_id(workbook.project_id)
+            except:
+                pass
+            
+            # Get views
+            views = []
+            for view in workbook.views:
+                views.append({
+                    'id': view.id,
+                    'name': view.name,
+                    'content_url': view.content_url
+                })
+            
+            workbooks.append({
+                'id': workbook.id,
+                'name': workbook.name,
+                'project_name': project.name if project else 'Default',
+                'views': views
+            })
+        
+        return workbooks
+        
+    except Exception as e:
+        print(f"Error getting workbooks: {str(e)}")
+        return []
+
 def download_and_save_data(server: TSC.Server, view_ids: list, workbook_name: str, view_names: list, table_name: str) -> bool:
     """Download data from Tableau views and save to SQLite database"""
     try:
@@ -85,4 +128,22 @@ def download_and_save_data(server: TSC.Server, view_ids: list, workbook_name: st
         
     except Exception as e:
         print(f"Error downloading and saving data: {str(e)}")
-        return False 
+        return False
+
+def generate_table_name(workbook_name: str, view_names: list) -> str:
+    """Generate a valid SQLite table name from workbook and view names"""
+    # Combine workbook name and view names
+    combined_name = f"{workbook_name}_{'_'.join(view_names)}"
+    
+    # Replace invalid characters
+    table_name = ''.join(c if c.isalnum() else '_' for c in combined_name)
+    
+    # Ensure name starts with a letter
+    if not table_name[0].isalpha():
+        table_name = 'table_' + table_name
+    
+    # Truncate if too long (SQLite has a limit)
+    if len(table_name) > 63:
+        table_name = table_name[:60] + '_' + str(hash(combined_name))[-2:]
+    
+    return table_name 
