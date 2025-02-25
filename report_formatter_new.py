@@ -1,4 +1,3 @@
-import streamlit as st
 import pandas as pd
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter, A4, landscape
@@ -26,11 +25,44 @@ class ReportFormatter:
         self.table_style = None
         self.chart_size = (6*inch, 4*inch)
         
-    def _resize_image(self, uploaded_file, max_width=6*inch, max_height=2*inch):
-        """Resize the uploaded image to fit within the specified dimensions"""
+        # Set default styles
+        self._set_default_styles()
+    
+    def _set_default_styles(self):
+        """Set default styles for the report"""
+        # Default title style
+        self.title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=self.styles['Title'],
+            fontSize=24,
+            textColor=colors.HexColor('#000000'),
+            alignment=TA_CENTER,
+            spaceAfter=30
+        )
+        
+        # Default table style
+        self.table_style = TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2d5d7b')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f5f5f5')),
+            ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 1), (-1, -1), 8),
+            ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#808080')),
+            ('ROWHEIGHT', (0, 0), (-1, -1), 20),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ])
+    
+    def _resize_image(self, image_data, max_width=6*inch, max_height=2*inch):
+        """Resize the image to fit within the specified dimensions"""
         try:
-            # Read the image using PIL
-            image = PILImage.open(uploaded_file)
+            # Create BytesIO object from image data
+            image_buffer = io.BytesIO(image_data)
+            image = PILImage.open(image_buffer)
             
             # Calculate aspect ratio
             aspect_ratio = image.width / image.height
@@ -53,219 +85,85 @@ class ReportFormatter:
             
             return Image(img_byte_arr, width=new_width, height=new_height)
         except Exception as e:
-            st.error(f"Error processing image: {str(e)}")
+            print(f"Error processing image: {str(e)}")
             return None
-
-    def show_formatting_interface(self, df):
-        """Show the report formatting interface in Streamlit"""
-        st.title("📋 Report Formatting")
-        
-        # Create tabs for different formatting sections
-        tabs = st.tabs(["Layout", "Styles", "Content", "Preview"])
-        
-        with tabs[0]:
-            self._show_layout_options()
-            
-        with tabs[1]:
-            self._show_style_options()
-            
-        with tabs[2]:
-            self._show_content_options(df)
-            
-        with tabs[3]:
-            self._show_preview(df)
     
-    def _show_layout_options(self):
-        """Show layout configuration options"""
-        st.subheader("📐 Page Layout")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            # Page size selection
-            page_size = st.selectbox(
-                "Page Size",
-                ["A4", "Letter", "Legal"],
-                help="Select the page size for your report"
-            )
-            self.page_size = A4 if page_size == "A4" else letter
-            
-            # Orientation selection
-            orientation = st.radio(
-                "Orientation",
-                ["Portrait", "Landscape"],
-                help="Choose the page orientation"
-            )
-            self.orientation = orientation.lower()
-        
-        with col2:
-            # Margins
-            st.write("Margins (inches)")
-            margin_left = st.number_input("Left", 0.1, 2.0, 0.5, 0.1)
-            margin_right = st.number_input("Right", 0.1, 2.0, 0.5, 0.1)
-            margin_top = st.number_input("Top", 0.1, 2.0, 0.5, 0.1)
-            margin_bottom = st.number_input("Bottom", 0.1, 2.0, 0.5, 0.1)
-            self.margins = (margin_left*inch, margin_right*inch, margin_top*inch, margin_bottom*inch)
-        
-        # Header and Footer
-        st.subheader("🖼️ Header & Footer")
-        header_image = st.file_uploader(
-            "Upload Header Image (optional)",
-            type=['png', 'jpg', 'jpeg'],
-            help="Upload a logo or header image (will be automatically resized to fit)"
-        )
-        if header_image:
-            # Get available width for image (page width minus margins)
-            available_width = (self.page_size[0] if self.orientation == 'portrait' else self.page_size[1]) - self.margins[0] - self.margins[1]
-            self.header_image = self._resize_image(header_image, max_width=available_width)
-            if self.header_image:
-                st.success("Header image processed successfully!")
-        
-        self.footer_text = st.text_input(
-            "Footer Text",
-            value="Generated by Tableau Data Reporter",
-            help="Enter text to appear in the footer"
-        )
-    
-    def _show_style_options(self):
-        """Show style configuration options"""
-        st.subheader("🎨 Styling Options")
-        
-        # Title styling
-        st.write("Title Style")
-        title_font = st.selectbox("Title Font", ["Helvetica", "Times-Roman", "Courier"])
-        title_size = st.slider("Title Size", 12, 36, 24)
-        title_color = st.color_picker("Title Color", "#000000")
-        title_alignment = st.radio("Title Alignment", ["Left", "Center", "Right"], horizontal=True)
-        
-        alignment_map = {"Left": TA_LEFT, "Center": TA_CENTER, "Right": TA_RIGHT}
-        self.title_style = ParagraphStyle(
-            'CustomTitle',
-            fontName=title_font,
-            fontSize=title_size,
-            textColor=colors.HexColor(title_color),
-            alignment=alignment_map[title_alignment],
-            spaceAfter=30
-        )
-        
-        # Table styling
-        st.write("Table Style")
-        table_header_color = st.color_picker("Header Background", "#2d5d7b")
-        table_row_color = st.color_picker("Alternate Row Color", "#f5f5f5")
-        table_font_size = st.slider("Table Font Size", 8, 14, 10)
-        
-        self.table_style = TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor(table_header_color)),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), table_font_size),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor(table_row_color)),
-            ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
-            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 1), (-1, -1), table_font_size-2),
-            ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#808080')),
-            ('ROWHEIGHT', (0, 0), (-1, -1), 20),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ])
-        
-        # Chart styling
-        st.write("Chart Size")
-        chart_width = st.slider("Chart Width (inches)", 4, 10, 6)
-        chart_height = st.slider("Chart Height (inches)", 3, 8, 4)
-        self.chart_size = (chart_width*inch, chart_height*inch)
-    
-    def _show_content_options(self, df):
-        """Show content selection and ordering options"""
-        st.subheader("📝 Content Selection")
-        
-        # Report Title
-        report_title = st.text_input(
-            "Report Title",
-            value="Data Report",
-            help="Enter the title that will appear at the top of your report"
-        )
-        
-        # Column selection and ordering
-        st.write("Select and order columns to include:")
-        selected_columns = st.multiselect(
-            "Columns",
-            df.columns.tolist(),
-            default=df.columns.tolist(),
-            help="Select and arrange columns in the desired order"
-        )
-        
-        # Summary statistics
-        st.write("Include Summary Statistics:")
-        include_row_count = st.checkbox("Row Count", value=True)
-        include_totals = st.checkbox("Column Totals", value=True)
-        include_averages = st.checkbox("Column Averages", value=True)
-        
-        # Store selections in session state
-        if 'report_content' not in st.session_state:
-            st.session_state.report_content = {}
-        
-        st.session_state.report_content.update({
-            'report_title': report_title,
-            'selected_columns': selected_columns,
-            'include_row_count': include_row_count,
-            'include_totals': include_totals,
-            'include_averages': include_averages
-        })
-    
-    def _show_preview(self, df):
-        """Show report preview"""
-        st.subheader("👀 Report Preview")
-        
-        if 'report_content' not in st.session_state:
-            st.warning("Please configure content options first")
+    def set_format_config(self, format_config: dict):
+        """Apply formatting configuration"""
+        if not format_config:
             return
-        
-        # Generate preview with user's settings
-        preview_buffer = self.generate_report(
-            df,
-            include_row_count=st.session_state.report_content.get('include_row_count', False),
-            include_totals=st.session_state.report_content.get('include_totals', False),
-            include_averages=st.session_state.report_content.get('include_averages', False),
-            report_title=st.session_state.report_content.get('report_title', "Data Report")
-        )
-        
-        st.session_state.preview_buffer = preview_buffer
-        
-        # Show download button for the preview
-        st.download_button(
-            label="⬇️ Download Preview",
-            data=preview_buffer.getvalue(),
-            file_name=f"report_preview_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-            mime="application/pdf"
-        )
-        
-        # Display PDF using Streamlit's native PDF display
-        try:
-            # Create two columns for better layout
-            col1, col2 = st.columns([1, 4])
             
-            with col1:
-                st.write("Preview Options:")
-                zoom_level = st.slider("Zoom %", min_value=50, max_value=200, value=100, step=10)
-            
-            with col2:
-                # Display PDF with custom width based on zoom level
-                width = int(700 * (zoom_level/100))
-                st.write("PDF Preview:")
-                st.write(f'<iframe src="data:application/pdf;base64,{base64.b64encode(preview_buffer.getvalue()).decode()}" width="{width}" height="800"></iframe>', unsafe_allow_html=True)
-                
-                # Add a note about download option
-                st.info("💡 If the preview is not visible, please use the download button above to view the PDF.")
-        except Exception as e:
-            st.error(f"Error displaying preview: {str(e)}")
-            st.info("Please use the download button above to view the PDF.")
+        # Page settings
+        if format_config.get('page_size'):
+            self.page_size = A4 if format_config['page_size'].upper() == 'A4' else letter
+        
+        if format_config.get('orientation'):
+            self.orientation = format_config['orientation'].lower()
+        
+        if format_config.get('margins'):
+            margins = format_config['margins']
+            self.margins = (
+                margins.get('left', 0.5) * inch,
+                margins.get('right', 0.5) * inch,
+                margins.get('top', 0.5) * inch,
+                margins.get('bottom', 0.5) * inch
+            )
+        
+        # Title style
+        if format_config.get('title_style'):
+            title_style = format_config['title_style']
+            self.title_style = ParagraphStyle(
+                'CustomTitle',
+                parent=self.styles['Title'],
+                fontName=title_style.get('fontName', 'Helvetica'),
+                fontSize=title_style.get('fontSize', 24),
+                textColor=colors.HexColor(title_style.get('textColor', '#000000')),
+                alignment=title_style.get('alignment', TA_CENTER),
+                spaceAfter=title_style.get('spaceAfter', 30)
+            )
+        
+        # Table style
+        if format_config.get('table_style'):
+            table_style = format_config['table_style']
+            self.table_style = TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor(table_style.get('headerColor', '#2d5d7b'))),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), table_style.get('fontSize', 10)),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor(table_style.get('rowColor', '#f5f5f5'))),
+                ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
+                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 1), (-1, -1), table_style.get('fontSize', 10) - 2),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor(table_style.get('gridColor', '#808080'))),
+                ('ROWHEIGHT', (0, 0), (-1, -1), table_style.get('rowHeight', 20)),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ])
+        
+        # Chart size
+        if format_config.get('chart_size'):
+            chart_size = format_config['chart_size']
+            self.chart_size = (
+                chart_size.get('width', 6) * inch,
+                chart_size.get('height', 4) * inch
+            )
+        
+        # Header image
+        if format_config.get('header_image'):
+            self.header_image = self._resize_image(format_config['header_image'])
+        
+        # Footer text
+        if format_config.get('footer_text'):
+            self.footer_text = format_config['footer_text']
     
-    def generate_report(self, df, include_row_count=True, include_totals=True, include_averages=True, report_title="Data Report"):
-        """Generate the formatted report"""
+    def generate_report(self, df: pd.DataFrame, report_title: str = "Data Report",
+                       include_row_count: bool = True, include_totals: bool = True,
+                       include_averages: bool = True, selected_columns: list = None) -> io.BytesIO:
+        """Generate a formatted PDF report"""
         buffer = io.BytesIO()
         
-        # Create the PDF document with current settings
+        # Set up the document
         page_size = self.page_size
         if self.orientation == 'landscape':
             page_size = landscape(page_size)
@@ -287,47 +185,26 @@ class ReportFormatter:
             elements.append(self.header_image)
             elements.append(Spacer(1, 20))
         
-        # Create default title style if none exists
-        if not self.title_style:
-            styles = getSampleStyleSheet()
-            self.title_style = ParagraphStyle(
-                'CustomTitle',
-                parent=styles['Title'],
-                fontSize=24,
-                spaceAfter=30,
-                alignment=TA_CENTER
-            )
-        
-        # Add title using the provided report_title
+        # Add title
         title = Paragraph(str(report_title), self.title_style)
         elements.append(title)
         
         # Add timestamp
-        timestamp_style = self.styles['Normal']
-        timestamp_style.fontSize = 10
-        timestamp_style.textColor = colors.gray
+        timestamp_style = ParagraphStyle(
+            'Timestamp',
+            parent=self.styles['Normal'],
+            fontSize=10,
+            textColor=colors.gray,
+            spaceAfter=20
+        )
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         elements.append(Paragraph(f"Generated on: {timestamp}", timestamp_style))
-        elements.append(Spacer(1, 20))
         
-        # Define default table style
-        default_table_style = TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2d5d7b')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 10),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f5f5f5')),
-            ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
-            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 1), (-1, -1), 8),
-            ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#808080')),
-            ('ROWHEIGHT', (0, 0), (-1, -1), 20),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ])
+        # Filter columns if specified
+        if selected_columns:
+            df = df[selected_columns]
         
-        # Add summary statistics only if requested
+        # Add summary statistics if requested
         if any([include_row_count, include_totals, include_averages]):
             summary_data = [["Metric", "Value"]]  # Header row
             
@@ -347,16 +224,29 @@ class ReportFormatter:
             
             if len(summary_data) > 1:  # Only add if we have data beyond the header
                 summary_table = Table(summary_data)
-                summary_table.setStyle(self.table_style or default_table_style)
+                summary_table.setStyle(self.table_style)
                 elements.append(summary_table)
                 elements.append(Spacer(1, 20))
         
         # Add main data table
         data = [df.columns.tolist()]  # Header row
-        data.extend(df.values.tolist())
         
-        main_table = Table(data)
-        main_table.setStyle(self.table_style or default_table_style)
+        # Format numeric values
+        formatted_df = df.copy()
+        for col in df.select_dtypes(include=['number']).columns:
+            formatted_df[col] = formatted_df[col].apply(lambda x: f"{x:,.2f}")
+        
+        data.extend(formatted_df.values.tolist())
+        
+        # Calculate column widths
+        col_widths = []
+        for col_idx in range(len(df.columns)):
+            col_content = [str(row[col_idx]) for row in data]
+            max_content_len = max(len(str(content)) for content in col_content)
+            col_widths.append(min(max_content_len * 7, 200))  # Scale factor of 7, max width 200
+        
+        main_table = Table(data, colWidths=col_widths)
+        main_table.setStyle(self.table_style)
         elements.append(main_table)
         
         # Add footer
