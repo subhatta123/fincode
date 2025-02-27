@@ -14,6 +14,7 @@ from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
 import pandas as pd
 from dotenv import load_dotenv
+import numpy as np
 
 # Load environment variables from .env file
 load_dotenv()
@@ -226,6 +227,7 @@ def normal_user_dashboard():
         <head>
             <title>Dashboard - Tableau Data Reporter</title>
             <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+            <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css" rel="stylesheet">
             <style>
                 .sidebar {
                     position: fixed;
@@ -240,6 +242,19 @@ def normal_user_dashboard():
                     margin-left: 240px;
                     padding: 20px;
                 }
+                .nav-link {
+                    padding: 0.5rem 1rem;
+                    font-size: 0.9rem;
+                }
+                .nav-link i {
+                    margin-right: 8px;
+                    width: 20px;
+                    text-align: center;
+                }
+                .nav-link.active {
+                    font-weight: bold;
+                    background-color: rgba(0, 123, 255, 0.1);
+                }
             </style>
         </head>
         <body>
@@ -249,67 +264,120 @@ def normal_user_dashboard():
                         <h5>👤 User Profile</h5>
                         <p><strong>Username:</strong> {{ session.user.username }}</p>
                         <p><strong>Role:</strong> {{ session.user.role }}</p>
-                        <p><strong>Organization:</strong> {{ session.user.organization_name or 'Not assigned' }}</p>
                     </div>
                     <hr>
-                    <div class="px-3">
-                        <a href="{{ url_for('tableau_connect') }}" class="btn btn-primary w-100 mb-2">🔌 Connect to Tableau</a>
-                        <a href="{{ url_for('schedule_reports') }}" class="btn btn-primary w-100 mb-2">📅 Schedule Reports</a>
-                        <hr>
-                        <a href="{{ url_for('logout') }}" class="btn btn-secondary w-100">🚪 Logout</a>
-                    </div>
+                    <ul class="nav flex-column">
+                        <li class="nav-item">
+                            <a class="nav-link active" href="{{ url_for('normal_user_dashboard') }}">
+                                <i class="bi bi-house"></i> Dashboard
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{{ url_for('tableau_connect') }}">
+                                <i class="bi bi-box-arrow-in-right"></i> Connect to Tableau
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{{ url_for('schedule_reports') }}">
+                                <i class="bi bi-calendar-plus"></i> Create Schedule
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{{ url_for('manage_schedules') }}">
+                                <i class="bi bi-calendar-check"></i> Manage Schedules
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{{ url_for('logout') }}">
+                                <i class="bi bi-box-arrow-right"></i> Logout
+                            </a>
+                        </li>
+                    </ul>
                 </div>
             </nav>
-            
+
             <main class="main">
-                <h1>💾 Saved Datasets</h1>
-                {% if not datasets %}
-                    <div class="alert alert-info">No datasets available. Connect to Tableau to import data.</div>
-                {% else %}
-                    <div class="row">
-                        {% for dataset in datasets %}
-                            <div class="col-md-6 mb-4">
-                                <div class="card">
-                                    <div class="card-body">
-                                        <h5 class="card-title">📊 {{ dataset }}</h5>
-                                        <div class="table-responsive">
-                                            {{ dataset_previews[dataset] | safe }}
-                                        </div>
-                                        <p class="text-muted">Total rows: {{ dataset_rows[dataset] }}</p>
-                                        <div class="btn-group">
+                <div class="container">
+                    {% with messages = get_flashed_messages() %}
+                        {% if messages %}
+                            {% for message in messages %}
+                                <div class="alert alert-info">{{ message }}</div>
+                            {% endfor %}
+                        {% endif %}
+                    {% endwith %}
+
+                    <h1 class="mb-4">Your Datasets</h1>
+                    
+                    {% if datasets %}
+                        <div class="row">
+                            {% for dataset in datasets %}
+                                <div class="col-md-4 mb-4">
+                                    <div class="card">
+                                        <div class="card-body">
+                                            <h5 class="card-title">{{ dataset }}</h5>
+                                            <h6 class="card-subtitle mb-2 text-muted">
+                                                <small>{{ get_dataset_row_count(dataset) }} rows</small>
+                                            </h6>
+                                            <a href="#" class="card-link" 
+                                               onclick="viewDatasetPreview('{{ dataset }}')">View Preview</a>
                                             <a href="{{ url_for('schedule_dataset', dataset=dataset) }}" 
-                                               class="btn btn-primary">📅 Schedule</a>
-                                            <button onclick="deleteDataset('{{ dataset }}')" 
-                                                    class="btn btn-danger">🗑️ Delete</button>
+                                               class="card-link">Create Schedule</a>
                                         </div>
                                     </div>
                                 </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="alert alert-info">
+                            <p>No datasets available. Please connect to Tableau and download data first.</p>
+                            <a href="{{ url_for('tableau_connect') }}" class="btn btn-primary">
+                                <i class="bi bi-box-arrow-in-right"></i> Connect to Tableau
+                            </a>
+                        </div>
+                    {% endif %}
+                    
+                    <!-- Dataset Preview Modal -->
+                    <div class="modal fade" id="datasetPreviewModal" tabindex="-1">
+                        <div class="modal-dialog modal-xl">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <h5 class="modal-title">Dataset Preview: <span id="datasetName"></span></h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <div id="datasetPreview"></div>
+                                </div>
                             </div>
-                        {% endfor %}
+                        </div>
                     </div>
-                {% endif %}
+                </div>
             </main>
             
+            <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
             <script>
-                function deleteDataset(dataset) {
-                    if (confirm('Are you sure you want to delete this dataset?')) {
-                        fetch(`/api/datasets/${dataset}`, { method: 'DELETE' })
-                            .then(response => response.json())
-                            .then(data => {
-                                if (data.success) {
-                                    location.reload();
-                                } else {
-                                    alert('Failed to delete dataset');
-                                }
-                            });
-                    }
+                function viewDatasetPreview(dataset) {
+                    document.getElementById('datasetName').textContent = dataset;
+                    const previewDiv = document.getElementById('datasetPreview');
+                    previewDiv.innerHTML = '<div class="text-center"><div class="spinner-border" role="status"></div><p>Loading preview...</p></div>';
+                    
+                    // Show modal
+                    const modal = new bootstrap.Modal(document.getElementById('datasetPreviewModal'));
+                    modal.show();
+                    
+                    // Fetch preview
+                    fetch(`/api/datasets/${dataset}/preview`)
+                        .then(response => response.text())
+                        .then(html => {
+                            previewDiv.innerHTML = html;
+                        })
+                        .catch(error => {
+                            previewDiv.innerHTML = `<div class="alert alert-danger">Failed to load preview: ${error}</div>`;
+                        });
                 }
             </script>
         </body>
         </html>
-    ''', datasets=datasets, 
-        dataset_previews={d: get_dataset_preview_html(d) for d in datasets},
-        dataset_rows={d: get_dataset_row_count(d) for d in datasets})
+    ''', datasets=datasets)
 
 @app.route('/power-user')
 @login_required
@@ -322,6 +390,7 @@ def power_user_dashboard():
         <head>
             <title>Power User Dashboard - Tableau Data Reporter</title>
             <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+            <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css" rel="stylesheet">
             <style>
                 .sidebar {
                     position: fixed;
@@ -336,79 +405,157 @@ def power_user_dashboard():
                     margin-left: 240px;
                     padding: 20px;
                 }
+                .nav-link {
+                    padding: 0.5rem 1rem;
+                    font-size: 0.9rem;
+                }
+                .nav-link i {
+                    margin-right: 8px;
+                    width: 20px;
+                    text-align: center;
+                }
+                .nav-link.active {
+                    font-weight: bold;
+                    background-color: rgba(0, 123, 255, 0.1);
+                }
             </style>
         </head>
         <body>
             <nav class="col-md-3 col-lg-2 d-md-block bg-light sidebar">
                 <div class="position-sticky pt-3">
                     <div class="px-3">
-                        <h5>👤 Power User Profile</h5>
+                        <h5>👤 User Profile</h5>
                         <p><strong>Username:</strong> {{ session.user.username }}</p>
                         <p><strong>Role:</strong> {{ session.user.role }}</p>
-                        <p><strong>Organization:</strong> {{ session.user.organization_name or 'Not assigned' }}</p>
                     </div>
                     <hr>
-                    <div class="px-3">
-                        <a href="{{ url_for('tableau_connect') }}" class="btn btn-primary w-100 mb-2">🔌 Connect to Tableau</a>
-                        <a href="{{ url_for('schedule_reports') }}" class="btn btn-primary w-100 mb-2">📅 Schedule Reports</a>
-                        <a href="{{ url_for('qa_page') }}" class="btn btn-primary w-100 mb-2">❓ Ask Questions</a>
-                        <hr>
-                        <a href="{{ url_for('logout') }}" class="btn btn-secondary w-100">🚪 Logout</a>
-                    </div>
+                    <ul class="nav flex-column">
+                        <li class="nav-item">
+                            <a class="nav-link active" href="{{ url_for('power_user_dashboard') }}">
+                                <i class="bi bi-house"></i> Dashboard
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{{ url_for('tableau_connect') }}">
+                                <i class="bi bi-box-arrow-in-right"></i> Connect to Tableau
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{{ url_for('qa_page') }}">
+                                <i class="bi bi-question-circle"></i> Ask Questions
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{{ url_for('schedule_reports') }}">
+                                <i class="bi bi-calendar-plus"></i> Create Schedule
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{{ url_for('manage_schedules') }}">
+                                <i class="bi bi-calendar-check"></i> Manage Schedules
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{{ url_for('logout') }}">
+                                <i class="bi bi-box-arrow-right"></i> Logout
+                            </a>
+                        </li>
+                    </ul>
                 </div>
             </nav>
-            
+
             <main class="main">
-                <h1>💾 Saved Datasets</h1>
-                {% if not datasets %}
-                    <div class="alert alert-info">No datasets available. Connect to Tableau to import data.</div>
-                {% else %}
-                    <div class="row">
-                        {% for dataset in datasets %}
-                            <div class="col-md-6 mb-4">
-                                <div class="card">
-                                    <div class="card-body">
-                                        <h5 class="card-title">📊 {{ dataset }}</h5>
-                                        <div class="table-responsive">
-                                            {{ dataset_previews[dataset] | safe }}
-                                        </div>
-                                        <p class="text-muted">Total rows: {{ dataset_rows[dataset] }}</p>
-                                        <div class="btn-group">
-                                            <a href="{{ url_for('schedule_dataset', dataset=dataset) }}" 
-                                               class="btn btn-primary">📅 Schedule</a>
-                                            <a href="{{ url_for('qa_page', dataset=dataset) }}"
-                                               class="btn btn-info">❓ Ask Questions</a>
-                                            <button onclick="deleteDataset('{{ dataset }}')" 
-                                                    class="btn btn-danger">🗑️ Delete</button>
+                <div class="container">
+                    {% with messages = get_flashed_messages() %}
+                        {% if messages %}
+                            {% for message in messages %}
+                                <div class="alert alert-info">{{ message }}</div>
+                            {% endfor %}
+                        {% endif %}
+                    {% endwith %}
+
+                    <h1 class="mb-4">Your Datasets</h1>
+                    
+                    {% if datasets %}
+                        <div class="row">
+                            {% for dataset in datasets %}
+                                <div class="col-md-4 mb-4">
+                                    <div class="card">
+                                        <div class="card-body">
+                                            <h5 class="card-title">{{ dataset }}</h5>
+                                            <h6 class="card-subtitle mb-2 text-muted">
+                                                <small>{{ get_dataset_row_count(dataset) }} rows</small>
+                                            </h6>
+                                            <div class="btn-group">
+                                                <a href="#" class="btn btn-sm btn-outline-primary" 
+                                                onclick="viewDatasetPreview('{{ dataset }}')">
+                                                    <i class="bi bi-table"></i> View Preview
+                                                </a>
+                                                <a href="{{ url_for('qa_page') }}?dataset={{ dataset }}" 
+                                                class="btn btn-sm btn-outline-success">
+                                                    <i class="bi bi-question-circle"></i> Ask Questions
+                                                </a>
+                                                <a href="{{ url_for('schedule_dataset', dataset=dataset) }}" 
+                                                class="btn btn-sm btn-outline-info">
+                                                    <i class="bi bi-calendar-plus"></i> Schedule
+                                                </a>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="alert alert-info">
+                            <p>No datasets available. Please connect to Tableau and download data first.</p>
+                            <a href="{{ url_for('tableau_connect') }}" class="btn btn-primary">
+                                <i class="bi bi-box-arrow-in-right"></i> Connect to Tableau
+                            </a>
+                        </div>
+                    {% endif %}
+                    
+                    <!-- Dataset Preview Modal -->
+                    <div class="modal fade" id="datasetPreviewModal" tabindex="-1">
+                        <div class="modal-dialog modal-xl">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <h5 class="modal-title">Dataset Preview: <span id="datasetName"></span></h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <div id="datasetPreview"></div>
+                                </div>
                             </div>
-                        {% endfor %}
+                        </div>
                     </div>
-                {% endif %}
+                </div>
             </main>
             
+            <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
             <script>
-                function deleteDataset(dataset) {
-                    if (confirm('Are you sure you want to delete this dataset?')) {
-                        fetch(`/api/datasets/${dataset}`, { method: 'DELETE' })
-                            .then(response => response.json())
-                            .then(data => {
-                                if (data.success) {
-                                    location.reload();
-                                } else {
-                                    alert('Failed to delete dataset');
-                                }
-                            });
-                    }
+                function viewDatasetPreview(dataset) {
+                    document.getElementById('datasetName').textContent = dataset;
+                    const previewDiv = document.getElementById('datasetPreview');
+                    previewDiv.innerHTML = '<div class="text-center"><div class="spinner-border" role="status"></div><p>Loading preview...</p></div>';
+                    
+                    // Show modal
+                    const modal = new bootstrap.Modal(document.getElementById('datasetPreviewModal'));
+                    modal.show();
+                    
+                    // Fetch preview
+                    fetch(`/api/datasets/${dataset}/preview`)
+                        .then(response => response.text())
+                        .then(html => {
+                            previewDiv.innerHTML = html;
+                        })
+                        .catch(error => {
+                            previewDiv.innerHTML = `<div class="alert alert-danger">Failed to load preview: ${error}</div>`;
+                        });
                 }
             </script>
         </body>
         </html>
-    ''', datasets=datasets, 
-        dataset_previews={d: get_dataset_preview_html(d) for d in datasets},
-        dataset_rows={d: get_dataset_row_count(d) for d in datasets})
+    ''', datasets=datasets, get_dataset_row_count=get_dataset_row_count)
 
 @app.route('/qa-page')
 @login_required
@@ -607,13 +754,89 @@ def ask_question_api():
         # Get answer and visualization
         answer, visualization = data_analyzer.ask_question(df, question)
         
+        # Debug: Log the visualization type and structure
+        print(f"Visualization type: {type(visualization)}")
+        
+        # Function to recursively convert NumPy types to Python standard types
+        def convert_numpy_types(obj):
+            import numpy as np
+            
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, np.integer):
+                return int(obj)
+            elif isinstance(obj, np.floating):
+                return float(obj)
+            elif isinstance(obj, np.bool_):
+                return bool(obj)
+            elif isinstance(obj, dict):
+                return {key: convert_numpy_types(value) for key, value in obj.items()}
+            elif isinstance(obj, list) or isinstance(obj, tuple):
+                return [convert_numpy_types(item) for item in obj]
+            else:
+                return obj
+        
+        # Handle JSON serialization
+        vis_dict = None
+        if visualization is not None:
+            try:
+                # Try different approaches to convert the visualization
+                
+                # 1. First try the to_dict method if it exists
+                if hasattr(visualization, 'to_dict'):
+                    print("Using to_dict() method")
+                    vis_dict = visualization.to_dict()
+                
+                # 2. If that doesn't work, try to manually create a dict if it has .data
+                if vis_dict is None and hasattr(visualization, 'data'):
+                    print("Using .data attribute")
+                    vis_dict = {}
+                    for key, value in visualization.data.items():
+                        vis_dict[key] = value  # Will be converted later
+                
+                # 3. If that doesn't work, try to convert to dict using vars() (if object has __dict__)
+                if vis_dict is None and hasattr(visualization, '__dict__'):
+                    print("Using __dict__ attribute")
+                    vis_dict = vars(visualization)
+                
+                # 4. If it's a Plotly figure, try to extract the data
+                if vis_dict is None and hasattr(visualization, 'data') and hasattr(visualization, 'layout'):
+                    print("Handling as Plotly figure")
+                    vis_dict = {
+                        'data': getattr(visualization, 'data', []),
+                        'layout': getattr(visualization, 'layout', {})
+                    }
+                
+                # 5. If all else fails, try to convert the entire object directly
+                if vis_dict is None:
+                    print("Using direct conversion")
+                    vis_dict = visualization
+                
+                # Finally, convert any NumPy types in the structure
+                vis_dict = convert_numpy_types(vis_dict)
+                
+            except Exception as e:
+                print(f"Error converting visualization to dict: {str(e)}")
+                # Return a message instead of None so the user knows what happened
+                vis_dict = None
+                # Don't fail silently - send error message to the user
+                return jsonify({
+                    'success': True,
+                    'answer': answer,
+                    'visualization': None,
+                    'visualization_error': f"Could not display visualization: {str(e)}"
+                })
+        
         return jsonify({
             'success': True,
             'answer': answer,
-            'visualization': visualization.to_dict() if visualization else None
+            'visualization': vis_dict
         })
         
     except Exception as e:
+        print(f"Error in ask_question_api: {str(e)}")
+        import traceback
+        traceback.print_exc()  # Print full stack trace for debugging
         return jsonify({
             'success': False,
             'error': str(e)
@@ -677,272 +900,29 @@ def delete_dataset_api(dataset):
         print(f"Error deleting dataset: {str(e)}")
         return jsonify({'success': False, 'error': str(e)})
 
+@app.route('/api/datasets/<dataset>/preview')
+@login_required
+def dataset_preview_api(dataset):
+    try:
+        preview_html = get_dataset_preview_html(dataset)
+        return preview_html
+    except Exception as e:
+        print(f"Error generating preview for {dataset}: {str(e)}")
+        return f"<div class='alert alert-danger'>Error: {str(e)}</div>"
+
 @app.route('/admin')
 @login_required
 @role_required(['superadmin'])
 def admin_dashboard():
-    return render_template_string('''
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Admin Dashboard - Tableau Data Reporter</title>
-            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-            <style>
-                .sidebar {
-                    position: fixed;
-                    top: 0;
-                    bottom: 0;
-                    left: 0;
-                    z-index: 100;
-                    padding: 48px 0 0;
-                    box-shadow: inset -1px 0 0 rgba(0, 0, 0, .1);
-                }
-                .main {
-                    margin-left: 240px;
-                    padding: 20px;
-                }
-            </style>
-        </head>
-        <body>
-            <nav class="col-md-3 col-lg-2 d-md-block bg-light sidebar">
-                <div class="position-sticky pt-3">
-                    <div class="px-3">
-                        <h5>👤 Admin Profile</h5>
-                        <p><strong>Username:</strong> {{ session.user.username }}</p>
-                        <p><strong>Role:</strong> {{ session.user.role }}</p>
-                    </div>
-                    <hr>
-                    <div class="px-3">
-                        <a href="{{ url_for('admin_users') }}" class="btn btn-primary w-100 mb-2">👥 Users</a>
-                        <a href="{{ url_for('admin_organizations') }}" class="btn btn-primary w-100 mb-2">🏢 Organizations</a>
-                        <a href="{{ url_for('admin_system') }}" class="btn btn-primary w-100 mb-2">⚙️ System</a>
-                        <hr>
-                        <a href="{{ url_for('logout') }}" class="btn btn-secondary w-100">🚪 Logout</a>
-                    </div>
-                </div>
-            </nav>
-            
-            <main class="main">
-                <h1>👥 User Management</h1>
-                
-                <div class="card mb-4">
-                    <div class="card-body">
-                        <h5>Add New User</h5>
-                        <form id="addUserForm" onsubmit="return addUser(event)">
-                            <div class="row">
-                                <div class="col-md-4">
-                                    <div class="mb-3">
-                                        <label class="form-label">Username</label>
-                                        <input type="text" class="form-control" name="username" required>
-                                    </div>
-                                </div>
-                                <div class="col-md-4">
-                                    <div class="mb-3">
-                                        <label class="form-label">Email</label>
-                                        <input type="email" class="form-control" name="email" required>
-                                    </div>
-                                </div>
-                                <div class="col-md-4">
-                                    <div class="mb-3">
-                                        <label class="form-label">Password</label>
-                                        <input type="password" class="form-control" name="password" required>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="row">
-                                <div class="col-md-4">
-                                    <div class="mb-3">
-                                        <label class="form-label">Permission Type</label>
-                                        <select class="form-select" name="permission_type" required>
-                                            <option value="normal">Normal</option>
-                                            <option value="power">Power</option>
-                                            <option value="superadmin">Superadmin</option>
-                                        </select>
-                                    </div>
-                                </div>
-                                <div class="col-md-4">
-                                    <div class="mb-3">
-                                        <label class="form-label">Organization</label>
-                                        <select class="form-select" name="organization_id">
-                                            <option value="">No Organization</option>
-                                            {% for org in organizations %}
-                                                <option value="{{ org.id }}">{{ org.name }}</option>
-                                            {% endfor %}
-                                        </select>
-                                    </div>
-                                </div>
-                                <div class="col-md-4">
-                                    <div class="mb-3">
-                                        <label class="form-label">&nbsp;</label>
-                                        <button type="submit" class="btn btn-primary w-100">Create User</button>
-                                    </div>
-                                </div>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-                
-                <div class="card">
-                    <div class="card-body">
-                        <div class="d-flex justify-content-between align-items-center mb-3">
-                            <h5 class="mb-0">Existing Users</h5>
-                            <div class="d-flex gap-2">
-                                <input type="text" class="form-control" id="searchUser" 
-                                       placeholder="Search users..." onkeyup="filterUsers()">
-                                <select class="form-select" id="filterPermission" onchange="filterUsers()">
-                                    <option value="">All Permissions</option>
-                                    <option value="normal">Normal</option>
-                                    <option value="power">Power</option>
-                                    <option value="superadmin">Superadmin</option>
-                                </select>
-                            </div>
-                        </div>
-                        
-                        <div class="table-responsive">
-                            <table class="table table-hover">
-                                <thead>
-                                    <tr>
-                                        <th>Username</th>
-                                        <th>Email</th>
-                                        <th>Role</th>
-                                        <th>Organization</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="userTableBody">
-                                    {% for user in users %}
-                                        <tr>
-                                            <td>{{ user.username }}</td>
-                                            <td>{{ user.email }}</td>
-                                            <td>{{ user.role }}</td>
-                                            <td>{{ user.organization_name or 'None' }}</td>
-                                            <td>
-                                                <div class="btn-group btn-group-sm">
-                                                    <button class="btn btn-outline-primary"
-                                                            onclick="editUser('{{ user.id }}')">
-                                                        ✏️ Edit
-                                                    </button>
-                                                    <button class="btn btn-outline-danger"
-                                                            onclick="deleteUser('{{ user.id }}')">
-                                                        🗑️ Delete
-                                                    </button>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    {% endfor %}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-            </main>
-            
-            <script>
-                function addUser(event) {
-                    event.preventDefault();
-                    const form = event.target;
-                    const formData = new FormData(form);
-                    
-                    fetch('/api/users', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify(Object.fromEntries(formData))
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.success) {
-                            location.reload();
-                        } else {
-                            alert(data.error || 'Failed to create user');
-                        }
-                    });
-                    
-                    return false;
-                }
-                
-                function editUser(userId) {
-                    // Implement edit user functionality
-                }
-                
-                function deleteUser(userId) {
-                    if (confirm('Are you sure you want to delete this user?')) {
-                        fetch(`/api/users/${userId}`, {
-                            method: 'DELETE'
-                        })
-                        .then(response => response.json())
-                        .then(data => {
-                            if (data.success) {
-                                location.reload();
-                            } else {
-                                alert(data.error || 'Failed to delete user');
-                            }
-                        });
-                    }
-                }
-                
-                function filterUsers() {
-                    const search = document.getElementById('searchUser').value.toLowerCase();
-                    const permission = document.getElementById('filterPermission').value;
-                    const rows = document.getElementById('userTableBody').getElementsByTagName('tr');
-                    
-                    for (let row of rows) {
-                        const username = row.cells[0].textContent.toLowerCase();
-                        const email = row.cells[1].textContent.toLowerCase();
-                        const role = row.cells[2].textContent.toLowerCase();
-                        
-                        const matchesSearch = username.includes(search) || 
-                                           email.includes(search);
-                        const matchesPermission = !permission || role === permission;
-                        
-                        row.style.display = matchesSearch && matchesPermission ? '' : 'none';
-                    }
-                }
-            </script>
-        </body>
-        </html>
-    ''', users=get_users(), organizations=get_organizations())
-
-@app.route('/api/users', methods=['POST'])
-@login_required
-@role_required(['superadmin'])
-def create_user_api():
+    # Get users list
     try:
-        data = request.json
-        if user_manager.add_user_to_org(
-            username=data['username'],
-            password=data['password'],
-            org_id=data['organization_id'] or None,
-            permission_type=data['permission_type'],
-            email=data['email']
-        ):
-            return jsonify({'success': True})
-        return jsonify({'success': False, 'error': 'Failed to create user'})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-
-@app.route('/api/users/<user_id>', methods=['DELETE'])
-@login_required
-@role_required(['superadmin'])
-def delete_user_api(user_id):
-    try:
-        if user_manager.delete_user(user_id):
-            return jsonify({'success': True})
-        return jsonify({'success': False, 'error': 'Failed to delete user'})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-
-def get_users():
-    """Get all users"""
-    try:
+        # Get users from database
         with sqlite3.connect('data/tableau_data.db') as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT u.rowid, u.username, u.email, u.role, u.organization_id, o.name
                 FROM users u
                 LEFT JOIN organizations o ON u.organization_id = o.rowid
-                ORDER BY u.username
             """)
             users = []
             for row in cursor.fetchall():
@@ -954,771 +934,884 @@ def get_users():
                     'organization_id': row[4],
                     'organization_name': row[5]
                 })
-            return users
-    except Exception as e:
-        print(f"Error getting users: {str(e)}")
-        return []
-
-def get_organizations():
-    """Get all organizations"""
-    try:
+                
+        # Get organizations
         with sqlite3.connect('data/tableau_data.db') as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT rowid, name FROM organizations ORDER BY name")
-            return [{'id': row[0], 'name': row[1]} for row in cursor.fetchall()]
-    except Exception as e:
-        print(f"Error getting organizations: {str(e)}")
-        return []
-
-@app.route('/tableau-connect', methods=['GET', 'POST'])
-@login_required
-def tableau_connect():
-    if request.method == 'POST':
-        try:
-            server_url = request.form.get('server_url')
-            site_name = request.form.get('site_name')
-            auth_method = request.form.get('auth_method')
-            
-            if not server_url:
-                flash('Please enter server URL')
-                return redirect(url_for('tableau_connect'))
-            
-            credentials = {}
-            if auth_method == 'token':
-                token_name = request.form.get('token_name')
-                token_value = request.form.get('token_value')
-                if not (token_name and token_value):
-                    flash('Please enter both token name and value')
-                    return redirect(url_for('tableau_connect'))
-                credentials = {'token_name': token_name, 'token_value': token_value}
-            else:
-                username = request.form.get('username')
-                password = request.form.get('password')
-                if not (username and password):
-                    flash('Please enter both username and password')
-                    return redirect(url_for('tableau_connect'))
-                credentials = {'username': username, 'password': password}
-            
-            # Attempt to authenticate
-            server = authenticate(server_url, auth_method, credentials, site_name)
-            if not server:
-                flash('Failed to connect to Tableau server')
-                return redirect(url_for('tableau_connect'))
-            
-            # Get workbooks
-            workbooks = get_workbooks(server)
-            if not workbooks:
-                flash('No workbooks found or insufficient permissions')
-                return redirect(url_for('tableau_connect'))
-            
-            # Store connection in session
-            session['tableau_connection'] = {
-                'server_url': server_url,
-                'site_name': site_name,
-                'auth_method': auth_method,
-                'credentials': credentials,
-                'workbooks': workbooks
-            }
-            
-            return redirect(url_for('select_workbook'))
-            
-        except Exception as e:
-            flash(f'Error connecting to Tableau: {str(e)}')
-            return redirect(url_for('tableau_connect'))
-    
-    return render_template_string('''
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Connect to Tableau - Data Reporter</title>
-            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-            <style>
-                body { padding: 20px; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="row justify-content-center">
-                    <div class="col-md-8">
-                        <div class="d-flex justify-content-between align-items-center mb-4">
-                            <h1>🔌 Connect to Tableau</h1>
-                            <a href="{{ url_for('home') }}" class="btn btn-outline-primary">← Back</a>
+            cursor.execute("SELECT rowid, name FROM organizations")
+            organizations = []
+            for row in cursor.fetchall():
+                organizations.append({
+                    'id': row[0],
+                    'name': row[1]
+                })
+                
+        return render_template_string('''
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Admin Dashboard - Tableau Data Reporter</title>
+                <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+                <style>
+                    .sidebar {
+                        position: fixed;
+                        top: 0;
+                        bottom: 0;
+                        left: 0;
+                        z-index: 100;
+                        padding: 48px 0 0;
+                        box-shadow: inset -1px 0 0 rgba(0, 0, 0, .1);
+                    }
+                    .main {
+                        margin-left: 240px;
+                        padding: 20px;
+                    }
+                </style>
+            </head>
+            <body>
+                <nav class="col-md-3 col-lg-2 d-md-block bg-light sidebar">
+                    <div class="position-sticky pt-3">
+                        <div class="px-3">
+                            <h5>👤 Admin Profile</h5>
+                            <p><strong>Username:</strong> {{ session.user.username }}</p>
+                            <p><strong>Role:</strong> {{ session.user.role }}</p>
                         </div>
-                        
-                        {% with messages = get_flashed_messages() %}
-                            {% if messages %}
-                                {% for message in messages %}
-                                    <div class="alert alert-info">{{ message }}</div>
-                                {% endfor %}
-                            {% endif %}
-                        {% endwith %}
-                        
-                        <div class="card">
-                            <div class="card-body">
-                                <form method="post">
-                                    <div class="mb-3">
-                                        <label class="form-label">Server URL</label>
-                                        <input type="text" class="form-control" name="server_url" 
-                                               placeholder="https://your-server.tableau.com" required>
-                                    </div>
-                                    
-                                    <div class="mb-3">
-                                        <label class="form-label">Site Name (optional)</label>
-                                        <input type="text" class="form-control" name="site_name" 
-                                               placeholder="Leave blank for default site">
-                                    </div>
-                                    
-                                    <div class="mb-3">
-                                        <label class="form-label">Authentication Method</label>
-                                        <div class="form-check">
-                                            <input class="form-check-input" type="radio" name="auth_method" 
-                                                   value="token" id="authToken" checked>
-                                            <label class="form-check-label" for="authToken">
-                                                Personal Access Token
-                                            </label>
-                                        </div>
-                                        <div class="form-check">
-                                            <input class="form-check-input" type="radio" name="auth_method" 
-                                                   value="password" id="authPassword">
-                                            <label class="form-check-label" for="authPassword">
-                                                Username/Password
-                                            </label>
-                                        </div>
-                                    </div>
-                                    
-                                    <div id="tokenAuth">
-                                        <div class="row">
-                                            <div class="col-md-6">
-                                                <div class="mb-3">
-                                                    <label class="form-label">Token Name</label>
-                                                    <input type="text" class="form-control" name="token_name">
-                                                </div>
-                                            </div>
-                                            <div class="col-md-6">
-                                                <div class="mb-3">
-                                                    <label class="form-label">Token Value</label>
-                                                    <input type="password" class="form-control" name="token_value">
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    
-                                    <div id="passwordAuth" style="display: none;">
-                                        <div class="row">
-                                            <div class="col-md-6">
-                                                <div class="mb-3">
-                                                    <label class="form-label">Username</label>
-                                                    <input type="text" class="form-control" name="username">
-                                                </div>
-                                            </div>
-                                            <div class="col-md-6">
-                                                <div class="mb-3">
-                                                    <label class="form-label">Password</label>
-                                                    <input type="password" class="form-control" name="password">
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    
-                                    <button type="submit" class="btn btn-primary">Connect</button>
-                                </form>
-                            </div>
+                        <hr>
+                        <div class="px-3">
+                            <a href="{{ url_for('admin_users') }}" class="btn btn-primary w-100 mb-2">👥 Users</a>
+                            <a href="{{ url_for('admin_organizations') }}" class="btn btn-primary w-100 mb-2">🏢 Organizations</a>
+                            <a href="{{ url_for('admin_system') }}" class="btn btn-primary w-100 mb-2">⚙️ System</a>
+                            <hr>
+                            <a href="{{ url_for('logout') }}" class="btn btn-secondary w-100">🚪 Logout</a>
                         </div>
                     </div>
-                </div>
-            </div>
-            
-            <script>
-                document.querySelectorAll('input[name="auth_method"]').forEach(radio => {
-                    radio.addEventListener('change', function() {
-                        document.getElementById('tokenAuth').style.display = 
-                            this.value === 'token' ? 'block' : 'none';
-                        document.getElementById('passwordAuth').style.display = 
-                            this.value === 'password' ? 'block' : 'none';
-                    });
-                });
-            </script>
-        </body>
-        </html>
-    ''')
-
-@app.route('/select-workbook')
-@login_required
-def select_workbook():
-    if 'tableau_connection' not in session:
-        flash('Please connect to Tableau first')
-        return redirect(url_for('tableau_connect'))
-    
-    workbooks = session['tableau_connection']['workbooks']
-    
-    return render_template_string('''
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Select Workbook - Data Reporter</title>
-            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-            <style>
-                body { padding: 20px; }
-                .workbook-card {
-                    cursor: pointer;
-                    transition: transform 0.2s;
-                }
-                .workbook-card:hover {
-                    transform: translateY(-5px);
-                }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="row justify-content-center">
-                    <div class="col-md-10">
-                        <div class="d-flex justify-content-between align-items-center mb-4">
-                            <h1>📚 Select Workbook</h1>
-                            <div>
-                                <a href="{{ url_for('tableau_connect') }}" class="btn btn-outline-primary me-2">
-                                    🔄 Reconnect
-                                </a>
-                                <a href="{{ url_for('home') }}" class="btn btn-outline-secondary">
-                                    ← Back
-                                </a>
-                            </div>
-                        </div>
-                        
-                        {% with messages = get_flashed_messages() %}
-                            {% if messages %}
-                                {% for message in messages %}
-                                    <div class="alert alert-info">{{ message }}</div>
-                                {% endfor %}
-                            {% endif %}
-                        {% endwith %}
-                        
-                        <div class="row">
-                            {% for workbook in workbooks %}
-                                <div class="col-md-6 mb-4">
-                                    <div class="card workbook-card h-100" 
-                                         onclick="selectWorkbook('{{ workbook.id }}')">
-                                        <div class="card-body">
-                                            <h5 class="card-title">
-                                                📊 {{ workbook.name }}
-                                            </h5>
-                                            <p class="card-text text-muted">
-                                                Project: {{ workbook.project_name }}
-                                            </p>
-                                            <p class="card-text">
-                                                Available Views: {{ workbook.views|length }}
-                                            </p>
+                </nav>
+                
+                <main class="main">
+                    <h1>👥 User Management</h1>
+                    
+                    <div class="card mb-4">
+                        <div class="card-body">
+                            <h5>Add New User</h5>
+                            <form id="addUserForm" onsubmit="return addUser(event)">
+                                <div class="row">
+                                    <div class="col-md-4">
+                                        <div class="mb-3">
+                                            <label class="form-label">Username</label>
+                                            <input type="text" class="form-control" name="username" required>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="mb-3">
+                                            <label class="form-label">Email</label>
+                                            <input type="email" class="form-control" name="email" required>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="mb-3">
+                                            <label class="form-label">Password</label>
+                                            <input type="password" class="form-control" name="password" required>
                                         </div>
                                     </div>
                                 </div>
-                            {% endfor %}
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <script>
-                function selectWorkbook(workbookId) {
-                    window.location.href = `/select-views/${workbookId}`;
-                }
-            </script>
-        </body>
-        </html>
-    ''', workbooks=workbooks)
-
-@app.route('/select-views/<workbook_id>')
-@login_required
-def select_views(workbook_id):
-    if 'tableau_connection' not in session:
-        flash('Please connect to Tableau first')
-        return redirect(url_for('tableau_connect'))
-    
-    workbooks = session['tableau_connection']['workbooks']
-    workbook = next((w for w in workbooks if w['id'] == workbook_id), None)
-    
-    if not workbook:
-        flash('Workbook not found')
-        return redirect(url_for('select_workbook'))
-    
-    return render_template_string('''
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Select Views - Data Reporter</title>
-            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-            <style>
-                body { padding: 20px; }
-                .view-card {
-                    cursor: pointer;
-                }
-                .view-card.selected {
-                    border-color: #0d6efd;
-                    background-color: #f8f9fa;
-                }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="row justify-content-center">
-                    <div class="col-md-10">
-                        <div class="d-flex justify-content-between align-items-center mb-4">
-                            <h1>🖼️ Select Views</h1>
-                            <div>
-                                <a href="{{ url_for('select_workbook') }}" class="btn btn-outline-primary me-2">
-                                    ← Back to Workbooks
-                                </a>
-                            </div>
-                        </div>
-                        
-                        <div class="card mb-4">
-                            <div class="card-body">
-                                <h5>Selected Workbook</h5>
-                                <p class="mb-0">
-                                    <strong>{{ workbook.name }}</strong>
-                                    <span class="text-muted">({{ workbook.project_name }})</span>
-                                </p>
-                            </div>
-                        </div>
-                        
-                        {% with messages = get_flashed_messages() %}
-                            {% if messages %}
-                                {% for message in messages %}
-                                    <div class="alert alert-info">{{ message }}</div>
-                                {% endfor %}
-                            {% endif %}
-                        {% endwith %}
-                        
-                        <form id="viewsForm" method="post" action="{{ url_for('download_views') }}">
-                            <input type="hidden" name="workbook_id" value="{{ workbook.id }}">
-                            
-                            <div class="row">
-                                {% for view in workbook.views %}
-                                    <div class="col-md-6 mb-4">
-                                        <div class="card view-card" onclick="toggleView(this, '{{ view.id }}')">
-                                            <div class="card-body">
-                                                <div class="form-check">
-                                                    <input class="form-check-input" type="checkbox" 
-                                                           name="view_ids" value="{{ view.id }}"
-                                                           style="display: none;">
-                                                    <label class="form-check-label">
-                                                        <h5 class="card-title mb-0">
-                                                            🖼️ {{ view.name }}
-                                                        </h5>
-                                                    </label>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                {% endfor %}
-                            </div>
-                            
-                            <div class="d-flex justify-content-end mt-4">
-                                <button type="submit" class="btn btn-primary" id="downloadBtn" disabled>
-                                    Download Selected Views
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            </div>
-            
-            <script>
-                function toggleView(card, viewId) {
-                    const checkbox = card.querySelector('input[type="checkbox"]');
-                    checkbox.checked = !checkbox.checked;
-                    card.classList.toggle('selected', checkbox.checked);
-                    
-                    // Enable/disable download button
-                    const checkedBoxes = document.querySelectorAll('input[name="view_ids"]:checked');
-                    document.getElementById('downloadBtn').disabled = checkedBoxes.length === 0;
-                }
-            </script>
-        </body>
-        </html>
-    ''', workbook=workbook)
-
-@app.route('/download-views', methods=['POST'])
-@login_required
-def download_views():
-    if 'tableau_connection' not in session:
-        flash('Please connect to Tableau first')
-        return redirect(url_for('tableau_connect'))
-    
-    workbook_id = request.form.get('workbook_id')
-    view_ids = request.form.getlist('view_ids')
-    
-    if not view_ids:
-        flash('Please select at least one view')
-        return redirect(url_for('select_views', workbook_id=workbook_id))
-    
-    # Get workbook and views
-    workbooks = session['tableau_connection']['workbooks']
-    workbook = next((w for w in workbooks if w['id'] == workbook_id), None)
-    views = [v for v in workbook['views'] if v['id'] in view_ids]
-    
-    # Generate table name
-    view_names = [view['name'] for view in views]
-    table_name = generate_table_name(workbook['name'], view_names)
-    
-    try:
-        # Authenticate with saved credentials
-        conn = session['tableau_connection']
-        server = authenticate(
-            conn['server_url'],
-            conn['auth_method'],
-            conn['credentials'],
-            conn['site_name']
-        )
-        
-        # Download and save data
-        success = download_and_save_data(
-            server,
-            view_ids,
-            workbook['name'],
-            view_names,
-            table_name
-        )
-        
-        if success:
-            flash('Data downloaded successfully!')
-            return redirect(url_for('home'))
-        else:
-            flash('Failed to download data')
-            return redirect(url_for('select_views', workbook_id=workbook_id))
-            
-    except Exception as e:
-        flash(f'Error downloading data: {str(e)}')
-        return redirect(url_for('select_views', workbook_id=workbook_id))
-
-@app.route('/schedule-reports')
-@login_required
-def schedule_reports():
-    datasets = get_saved_datasets()
-    return render_template_string('''
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Schedule Reports - Tableau Data Reporter</title>
-            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-            <style>
-                body { padding: 20px; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="row justify-content-center">
-                    <div class="col-md-10">
-                        <div class="d-flex justify-content-between align-items-center mb-4">
-                            <h1>📅 Schedule Reports</h1>
-                            <a href="{{ url_for('home') }}" class="btn btn-outline-primary">← Back</a>
-                        </div>
-                        
-                        {% if not datasets %}
-                            <div class="alert alert-info">
-                                No datasets available. Please connect to Tableau and download some data first.
-                            </div>
-                        {% else %}
-                            <div class="row">
-                                {% for dataset in datasets %}
-                                    <div class="col-md-6 mb-4">
-                                        <div class="card">
-                                            <div class="card-body">
-                                                <h5 class="card-title">📊 {{ dataset }}</h5>
-                                                <p class="text-muted">Rows: {{ dataset_rows[dataset] }}</p>
-                                                <a href="{{ url_for('schedule_dataset', dataset=dataset) }}" 
-                                                   class="btn btn-primary">Schedule Report</a>
-                                            </div>
-                                        </div>
-                                    </div>
-                                {% endfor %}
-                            </div>
-                        {% endif %}
-                    </div>
-                </div>
-            </div>
-        </body>
-        </html>
-    ''', datasets=datasets, dataset_rows={d: get_dataset_row_count(d) for d in datasets})
-
-@app.route('/schedule-dataset/<dataset>')
-@login_required
-def schedule_dataset(dataset):
-    return render_template_string('''
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Schedule Dataset Report - Tableau Data Reporter</title>
-            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-            <style>
-                body { padding: 20px; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="row justify-content-center">
-                    <div class="col-md-8">
-                        <div class="d-flex justify-content-between align-items-center mb-4">
-                            <h1>📅 Schedule Report</h1>
-                            <a href="{{ url_for('schedule_reports') }}" class="btn btn-outline-primary">← Back</a>
-                        </div>
-                        
-                        <div class="card mb-4">
-                            <div class="card-body">
-                                <h5>Dataset: {{ dataset }}</h5>
-                                <p class="text-muted mb-0">Total rows: {{ row_count }}</p>
-                            </div>
-                        </div>
-                        
-                        <div class="card">
-                            <div class="card-body">
-                                <form id="scheduleForm" onsubmit="return submitSchedule(event)">
-                                    <input type="hidden" name="dataset" value="{{ dataset }}">
-                                    
-                                    <div class="mb-3">
-                                        <label class="form-label">Schedule Type</label>
-                                        <select class="form-select" name="schedule_type" onchange="updateScheduleFields()" required>
-                                            <option value="one-time">One Time</option>
-                                            <option value="daily">Daily</option>
-                                            <option value="weekly">Weekly</option>
-                                            <option value="monthly">Monthly</option>
-                                        </select>
-                                    </div>
-                                    
-                                    <div id="oneTimeFields">
+                                <div class="row">
+                                    <div class="col-md-4">
                                         <div class="mb-3">
-                                            <label class="form-label">Date</label>
-                                            <input type="date" class="form-control" name="date" 
-                                                   min="{{ today }}" required>
-                                        </div>
-                                    </div>
-                                    
-                                    <div id="weeklyFields" style="display: none;">
-                                        <div class="mb-3">
-                                            <label class="form-label">Days of Week</label>
-                                            <div class="form-check">
-                                                <input type="checkbox" class="form-check-input" name="days[]" value="0">
-                                                <label class="form-check-label">Monday</label>
-                                            </div>
-                                            <div class="form-check">
-                                                <input type="checkbox" class="form-check-input" name="days[]" value="1">
-                                                <label class="form-check-label">Tuesday</label>
-                                            </div>
-                                            <div class="form-check">
-                                                <input type="checkbox" class="form-check-input" name="days[]" value="2">
-                                                <label class="form-check-label">Wednesday</label>
-                                            </div>
-                                            <div class="form-check">
-                                                <input type="checkbox" class="form-check-input" name="days[]" value="3">
-                                                <label class="form-check-label">Thursday</label>
-                                            </div>
-                                            <div class="form-check">
-                                                <input type="checkbox" class="form-check-input" name="days[]" value="4">
-                                                <label class="form-check-label">Friday</label>
-                                            </div>
-                                            <div class="form-check">
-                                                <input type="checkbox" class="form-check-input" name="days[]" value="5">
-                                                <label class="form-check-label">Saturday</label>
-                                            </div>
-                                            <div class="form-check">
-                                                <input type="checkbox" class="form-check-input" name="days[]" value="6">
-                                                <label class="form-check-label">Sunday</label>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    
-                                    <div id="monthlyFields" style="display: none;">
-                                        <div class="mb-3">
-                                            <label class="form-label">Day of Month</label>
-                                            <select class="form-select" name="day_option">
-                                                <option value="specific">Specific Day</option>
-                                                <option value="last">Last Day</option>
-                                                <option value="first_weekday">First Weekday</option>
-                                                <option value="last_weekday">Last Weekday</option>
+                                            <label class="form-label">Permission Type</label>
+                                            <select class="form-select" name="permission_type" required>
+                                                <option value="normal">Normal</option>
+                                                <option value="power">Power</option>
+                                                <option value="superadmin">Superadmin</option>
                                             </select>
                                         </div>
-                                        <div id="specificDayField" class="mb-3">
-                                            <label class="form-label">Day</label>
-                                            <input type="number" class="form-control" name="day" 
-                                                   min="1" max="31" value="1">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="mb-3">
+                                            <label class="form-label">Organization</label>
+                                            <select class="form-select" name="organization_id">
+                                                <option value="">No Organization</option>
+                                                {% for org in organizations %}
+                                                    <option value="{{ org.id }}">{{ org.name }}</option>
+                                                {% endfor %}
+                                            </select>
                                         </div>
                                     </div>
-                                    
-                                    <div class="row">
-                                        <div class="col-md-6">
-                                            <div class="mb-3">
-                                                <label class="form-label">Hour (24-hour)</label>
-                                                <input type="number" class="form-control" name="hour" 
-                                                       min="0" max="23" value="0" required>
-                                            </div>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <div class="mb-3">
-                                                <label class="form-label">Minute</label>
-                                                <input type="number" class="form-control" name="minute" 
-                                                       min="0" max="59" value="0" required>
-                                            </div>
+                                    <div class="col-md-4">
+                                        <div class="mb-3">
+                                            <label class="form-label">&nbsp;</label>
+                                            <button type="submit" class="btn btn-primary w-100">Create User</button>
                                         </div>
                                     </div>
-                                    
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                    
+                    <div class="card">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <h5 class="mb-0">Existing Users</h5>
+                                <div class="d-flex gap-2">
+                                    <input type="text" class="form-control" id="searchUser" 
+                                        placeholder="Search users..." onkeyup="filterUsers()">
+                                    <select class="form-select" id="filterPermission" onchange="filterUsers()">
+                                        <option value="">All Permissions</option>
+                                        <option value="normal">Normal</option>
+                                        <option value="power">Power</option>
+                                        <option value="superadmin">Superadmin</option>
+                                    </select>
+                                </div>
+                            </div>
+                            
+                            <div class="table-responsive">
+                                <table class="table table-hover">
+                                    <thead>
+                                        <tr>
+                                            <th>Username</th>
+                                            <th>Email</th>
+                                            <th>Role</th>
+                                            <th>Organization</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="userTableBody">
+                                        {% for user in users %}
+                                            <tr>
+                                                <td>{{ user.username }}</td>
+                                                <td>{{ user.email }}</td>
+                                                <td>{{ user.role }}</td>
+                                                <td>{{ user.organization_name or 'None' }}</td>
+                                                <td>
+                                                    <div class="btn-group btn-group-sm">
+                                                        <button class="btn btn-outline-primary"
+                                                                onclick="editUser('{{ user.id }}')">
+                                                            ✏️ Edit
+                                                        </button>
+                                                        <button class="btn btn-outline-danger"
+                                                                onclick="deleteUser('{{ user.id }}')">
+                                                            🗑️ Delete
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </main>
+                
+                <!-- Edit User Modal -->
+                <div class="modal fade" id="editUserModal" tabindex="-1" aria-hidden="true">
+                    <div class="modal-dialog">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title">Edit User</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <form id="editUserForm">
+                                    <input type="hidden" id="edit-user-id" name="id">
                                     <div class="mb-3">
-                                        <label class="form-label">Timezone</label>
-                                        <select class="form-select" name="timezone" required>
-                                            {% for tz in timezones %}
-                                                <option value="{{ tz }}"
-                                                        {% if tz == 'UTC' %}selected{% endif %}>
-                                                    {{ tz }}
-                                                </option>
+                                        <label class="form-label">Username</label>
+                                        <input type="text" class="form-control" id="edit-username" name="username" required>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">Email</label>
+                                        <input type="email" class="form-control" id="edit-email" name="email" required>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">Password</label>
+                                        <input type="password" class="form-control" id="edit-password" name="password" 
+                                            placeholder="Leave blank to keep current password">
+                                        <div class="form-text">Leave blank to keep the current password</div>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">Permission Type</label>
+                                        <select class="form-select" id="edit-permission-type" name="permission_type" required>
+                                            <option value="normal">Normal</option>
+                                            <option value="power">Power</option>
+                                            <option value="superadmin">Superadmin</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">Organization</label>
+                                        <select class="form-select" id="edit-organization-id" name="organization_id">
+                                            <option value="">No Organization</option>
+                                            {% for org in organizations %}
+                                                <option value="{{ org.id }}">{{ org.name }}</option>
                                             {% endfor %}
                                         </select>
                                     </div>
-                                    
-                                    <hr>
-                                    
-                                    <div class="mb-3">
-                                        <label class="form-label">Report Format</label>
-                                        <div class="form-check">
-                                            <input class="form-check-input" type="radio" name="format" value="PDF" id="formatPDF" checked>
-                                            <label class="form-check-label" for="formatPDF">PDF</label>
-                                        </div>
-                                        <div class="form-check">
-                                            <input class="form-check-input" type="radio" name="format" value="CSV" id="formatCSV">
-                                            <label class="form-check-label" for="formatCSV">CSV</label>
-                                        </div>
-                                    </div>
-                                    
-                                    <div class="mb-3">
-                                        <label class="form-label">Email Recipients (comma-separated)</label>
-                                        <input type="text" class="form-control" name="recipients" 
-                                               placeholder="email1@example.com, email2@example.com" required>
-                                    </div>
-                                    
-                                    <div class="mb-3">
-                                        <label class="form-label">WhatsApp Recipients (comma-separated)</label>
-                                        <input type="text" class="form-control" name="whatsapp_recipients" 
-                                               placeholder="+1234567890, +0987654321">
-                                        <small class="text-muted">Include country code (e.g., +1 for US)</small>
-                                    </div>
-                                    
-                                    <div class="mb-3">
-                                        <label class="form-label">Message (optional)</label>
-                                        <textarea class="form-control" name="message" rows="3"
-                                                  placeholder="Optional message to include in the email and WhatsApp"></textarea>
-                                    </div>
-                                    
-                                    <button type="submit" class="btn btn-primary">Create Schedule</button>
                                 </form>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                <button type="button" class="btn btn-primary" onclick="updateUser()">Save Changes</button>
                             </div>
                         </div>
                     </div>
                 </div>
-            </div>
-            
-            <script>
-                function updateScheduleFields() {
-                    const scheduleType = document.querySelector('select[name="schedule_type"]').value;
-                    
-                    document.getElementById('oneTimeFields').style.display = 
-                        scheduleType === 'one-time' ? 'block' : 'none';
-                    document.getElementById('weeklyFields').style.display = 
-                        scheduleType === 'weekly' ? 'block' : 'none';
-                    document.getElementById('monthlyFields').style.display = 
-                        scheduleType === 'monthly' ? 'block' : 'none';
-                    
-                    // Update required attributes
-                    document.querySelector('input[name="date"]').required = 
-                        scheduleType === 'one-time';
-                }
                 
-                function submitSchedule(event) {
-                    event.preventDefault();
-                    const form = event.target;
-                    const formData = new FormData(form);
-                    
-                    // Get selected days for weekly schedule
-                    if (formData.get('schedule_type') === 'weekly') {
-                        const days = Array.from(document.querySelectorAll('input[name="days[]"]:checked'))
-                            .map(cb => parseInt(cb.value));
-                        if (days.length === 0) {
-                            alert('Please select at least one day for weekly schedule');
-                            return false;
-                        }
-                        formData.delete('days[]');
-                        formData.append('days', JSON.stringify(days));
+                <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+                <script>
+                    function addUser(event) {
+                        event.preventDefault();
+                        const form = event.target;
+                        const formData = new FormData(form);
+                        
+                        fetch('/api/users', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify(Object.fromEntries(formData))
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.success) {
+                                location.reload();
+                            } else {
+                                alert(data.error || 'Failed to create user');
+                            }
+                        });
+                        
+                        return false;
                     }
                     
-                    // Get WhatsApp recipients
-                    const whatsappRecipients = formData.get('whatsapp_recipients')
-                        .split(',')
-                        .map(num => num.trim())
-                        .filter(num => num);
+                    function editUser(userId) {
+                        console.log('editUser function called with userId:', userId);
+                        
+                        // Fetch user data
+                        fetch(`/api/users/${userId}`)
+                            .then(response => response.json())
+                            .then(data => {
+                                if (data.success) {
+                                    // Populate the form
+                                    const user = data.user;
+                                    document.getElementById('edit-user-id').value = user.id;
+                                    document.getElementById('edit-username').value = user.username;
+                                    document.getElementById('edit-email').value = user.email;
+                                    document.getElementById('edit-permission-type').value = user.role;
+                                    document.getElementById('edit-organization-id').value = user.organization_id;
+                                    
+                                    // Clear password field
+                                    document.getElementById('edit-password').value = '';
+                                    
+                                    // Try to show the modal using Bootstrap
+                                    try {
+                                        // Try using Bootstrap 5 approach
+                                        const modalElement = document.getElementById('editUserModal');
+                                        if (typeof bootstrap !== 'undefined') {
+                                            const modal = new bootstrap.Modal(modalElement);
+                                            modal.show();
+                                        } else {
+                                            // Fallback if Bootstrap JS is not loaded
+                                            console.log('Bootstrap not loaded, using fallback to show modal');
+                                            modalElement.style.display = 'block';
+                                            modalElement.classList.add('show');
+                                            modalElement.setAttribute('aria-modal', 'true');
+                                            document.body.classList.add('modal-open');
+                                            
+                                            // Add backdrop
+                                            const backdrop = document.createElement('div');
+                                            backdrop.className = 'modal-backdrop fade show';
+                                            document.body.appendChild(backdrop);
+                                        }
+                                    } catch (e) {
+                                        console.error('Error showing modal:', e);
+                                        alert('Error showing modal. Try refreshing the page.');
+                                    }
+                                } else {
+                                    alert(data.error || 'Failed to get user data');
+                                }
+                            })
+                            .catch(error => {
+                                alert('Error fetching user data: ' + error);
+                            });
+                    }
                     
-                    fetch('/api/schedules', {
-                        method: 'POST',
-                        body: formData
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.success) {
-                            window.location.href = "{{ url_for('schedule_reports') }}";
-                        } else {
-                            alert(data.error || 'Failed to create schedule');
-                        }
-                    });
-                    
-                    return false;
-                }
-                
-                // Initialize fields on load
-                document.addEventListener('DOMContentLoaded', updateScheduleFields);
-            </script>
-        </body>
-        </html>
-    ''', dataset=dataset, row_count=get_dataset_row_count(dataset),
-        today=datetime.now().strftime('%Y-%m-%d'),
-        timezones=pytz.all_timezones)
-
-@app.route('/api/schedules', methods=['POST'])
-@login_required
-def create_schedule_api():
-    try:
-        dataset = request.form.get('dataset')
-        schedule_type = request.form.get('schedule_type')
-        timezone = request.form.get('timezone', 'UTC')
+                    function updateUser() {
+                        console.log('updateUser function called');
+                        const userId = document.getElementById('edit-user-id').value;
+                        const formData = new FormData(document.getElementById('editUserForm'));
+                        
+                        fetch(`/api/users/${userId}`, {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify(Object.fromEntries(formData))
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.success) {
+                                // Try to close the modal
+                                try {
+                                    const modalElement = document.getElementById('editUserModal');
+                                    
+                                    if (typeof bootstrap !== 'undefined') {
+                                        // Bootstrap 5 approach
+                                        const modalInstance = bootstrap.Modal.getInstance(modalElement);
+                                        if (modalInstance) {
+                                            modalInstance.hide();
+                                        }
+                                    } else {
+                                        // Fallback if Bootstrap JS is not loaded
+                                        modalElement.style.display = 'none';
+                                        modalElement.classList.remove('show');
+                                        modalElement.setAttribute('aria-modal', 'false');
+                                        document.body.classList.remove('modal-open');
+                                        
+                                        // Remove backdrop if it exists
+                                        const backdrop = document.querySelector('.modal-backdrop');
+                                        if (backdrop) {
+                                            backdrop.remove();
+                                        }
+                                    }
+                                } catch (e) {
+                                    console.error('Error closing modal:', e);
+                                }
+                                
+                                // Reload the page to show updated data
+                                location.reload();
+                            } else {
+                                alert(data.error || 'Failed to update user');
+                            }
+                        })
+                        .catch(error => {
+                            console.error('Error updating user:', error);
+                            alert('Error updating user: ' + error);
+                        });
+                    }
+                </script>
+            </body>
+            </html>
+        ''', users=users, organizations=organizations)
         
-        # Parse schedule configuration
+    except Exception as e:
+        print(f"Error in admin_dashboard function: {str(e)}")
+        print(f"Exception type: {type(e).__name__}")
+        flash(f'Error loading admin dashboard: {str(e)}')
+        return redirect(url_for('home'))
+
+@app.route('/create_schedule', methods=['POST'])
+def process_schedule_form():
+    try:
+        # Get form data
+        dataset_name = request.form.get('dataset_name')
+        if not dataset_name:
+            flash('Dataset name is required', 'error')
+            return redirect(url_for('manage_schedules'))
+        
+        # Debug: Print all form data to see what's being submitted
+        print("Form data received:")
+        for key, value in request.form.items():
+            print(f"  {key}: {value}")
+            
+        # Get timezone from form or default to UTC
+        timezone_str = request.form.get('timezone', 'UTC')
+        print(f"Selected timezone: {timezone_str}")
+            
+        # Schedule type and time - explicitly convert to int with proper error handling
+        schedule_type = request.form.get('schedule_type')
+        
+        # For hour and minute, check raw form values first
+        try:
+            raw_hour = request.form.get('hour')
+            raw_minute = request.form.get('minute')
+            print(f"Raw hour value from form: '{raw_hour}'")
+            print(f"Raw minute value from form: '{raw_minute}'")
+            
+            # Try to convert to integer
+            hour = int(raw_hour) if raw_hour else 0
+            minute = int(raw_minute) if raw_minute else 0
+        except (ValueError, TypeError) as e:
+            print(f"Error parsing hour/minute: {str(e)}")
+            # Fallback to default
+            hour = 0
+            minute = 0
+            
+        print(f"Submitted time: {hour:02d}:{minute:02d}")
+        print(f"Parsed hour: {hour}, minute: {minute}")
+        
+        # Create schedule configuration
         schedule_config = {
             'type': schedule_type,
-            'hour': int(request.form.get('hour', 0)),
-            'minute': int(request.form.get('minute', 0)),
-            'timezone': timezone
+            'hour': hour,
+            'minute': minute,
+            'timezone': timezone_str,
+            'time_str': f"{hour:02d}:{minute:02d} ({timezone_str})" # For display
         }
         
+        # Add schedule-specific parameters
         if schedule_type == 'one-time':
-            schedule_config['date'] = request.form.get('date')
-        elif schedule_type == 'weekly':
-            schedule_config['days'] = json.loads(request.form.get('days', '[]'))
-        elif schedule_type == 'monthly':
-            schedule_config['day_option'] = request.form.get('day_option')
-            if schedule_config['day_option'] == 'specific':
-                schedule_config['day'] = int(request.form.get('day', 1))
+            date = request.form.get('date')
+            print(f"Date from form: '{date}'")
+            if not date:
+                flash('Date is required for one-time schedules', 'error')
+                return redirect(url_for('manage_schedules'))
+            schedule_config['date'] = date
+            
+            # Add local and UTC datetimes for reference
+            try:
+                # Use pytz to create timezone-aware datetime
+                dt_str = f"{date} {hour:02d}:{minute:02d}:00"
+                print(f"Creating datetime from: '{dt_str}'")
+                timezone = pytz.timezone(timezone_str)
+                local_dt = timezone.localize(datetime.strptime(dt_str, '%Y-%m-%d %H:%M:%S'))
+                utc_dt = local_dt.astimezone(pytz.UTC)
+                schedule_config['local_datetime'] = local_dt.isoformat()
+                schedule_config['utc_datetime'] = utc_dt.isoformat()
+                print(f"Parsed datetime: {local_dt.isoformat()} (local), {utc_dt.isoformat()} (UTC)")
+            except Exception as e:
+                print(f"Error parsing datetime: {str(e)}")
+                # Continue without the parsed datetime - not critical
         
-        # Parse email configuration
+        elif schedule_type == 'weekly':
+            days = request.form.getlist('days')
+            if not days:
+                flash('At least one day must be selected for weekly schedules', 'error')
+                return redirect(url_for('manage_schedules'))
+            schedule_config['days'] = days
+            
+        elif schedule_type == 'monthly':
+            day_option = request.form.get('day_option', 'Specific Day')
+            schedule_config['day_option'] = day_option
+            
+            if day_option == 'Specific Day':
+                day = request.form.get('day')
+                if not day:
+                    flash('Day is required for monthly schedules with specific day', 'error')
+                    return redirect(url_for('manage_schedules'))
+                schedule_config['day'] = int(day)
+                
+        # Email configuration
         email_config = {
-            'recipients': [email.strip() for email in request.form.get('recipients', '').split(',')],
-            'whatsapp_recipients': [num.strip() for num in request.form.get('whatsapp_recipients', '').split(',') if num.strip()],
-            'body': request.form.get('message', '').strip(),
-            'format': request.form.get('format', 'PDF'),
-            'smtp_server': os.getenv('SMTP_SERVER'),
-            'smtp_port': int(os.getenv('SMTP_PORT', 587)),
-            'sender_email': os.getenv('SENDER_EMAIL'),
-            'sender_password': os.getenv('SENDER_PASSWORD')
+            'recipients': request.form.getlist('recipients'),
+            'cc': request.form.getlist('cc'),
+            'subject': request.form.get('subject', f'Report for {dataset_name}'),
+            'body': request.form.get('body', 'Please find the attached report.')
         }
         
-        # Create schedule
-        job_id = report_manager.schedule_report(dataset, email_config, schedule_config)
-        if job_id:
-            return jsonify({'success': True, 'job_id': job_id})
-        return jsonify({'success': False, 'error': 'Failed to create schedule'})
+        # Format configuration
+        format_type = request.form.get('format_type')
+        format_config = {'type': format_type}
         
+        if format_type == 'csv':
+            format_config['delimiter'] = request.form.get('delimiter', ',')
+            format_config['quotechar'] = request.form.get('quotechar', '"')
+            
+        elif format_type == 'excel':
+            format_config['sheet_name'] = request.form.get('sheet_name', 'Sheet1')
+            
+        elif format_type == 'json':
+            format_config['indent'] = int(request.form.get('indent', 4))
+            format_config['orient'] = request.form.get('orient', 'records')
+            
+        # Schedule the report
+        job_id = report_manager.schedule_report(dataset_name, schedule_config, email_config, format_config)
+        
+        if job_id:
+            flash(f"Schedule created successfully. Next run at: {report_manager.get_next_run_time(job_id)}", 'success')
+        else:
+            flash("Failed to create schedule. Check logs for details.", 'error')
+            
+        return redirect(url_for('manage_schedules'))
+        
+    except Exception as e:
+        print(f"Error in process_schedule_form: {str(e)}")
+        flash(f"Error creating schedule: {str(e)}", 'error')
+        return redirect(url_for('manage_schedules'))
+
+# Fix the admin routes to match endpoint names
+@app.route('/admin_users')
+@login_required
+@role_required(['superadmin'])
+def admin_users():
+    # Redirect to admin dashboard since it already has the user management UI
+    return redirect(url_for('admin_dashboard'))
+
+@app.route('/admin_organizations')
+@login_required
+@role_required(['superadmin'])
+def admin_organizations():
+    # Get organizations from database
+    try:
+        with sqlite3.connect('data/tableau_data.db') as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT rowid, name FROM organizations")
+            organizations = []
+            for row in cursor.fetchall():
+                organizations.append({
+                    'id': row[0],
+                    'name': row[1]
+                })
+        
+        # Organizations management page
+        return render_template_string('''
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Organizations - Tableau Data Reporter</title>
+                <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+                <style>
+                    .sidebar {
+                        position: fixed;
+                        top: 0;
+                        bottom: 0;
+                        left: 0;
+                        z-index: 100;
+                        padding: 48px 0 0;
+                        box-shadow: inset -1px 0 0 rgba(0, 0, 0, .1);
+                    }
+                    .main {
+                        margin-left: 240px;
+                        padding: 20px;
+                    }
+                </style>
+            </head>
+            <body>
+                <nav class="col-md-3 col-lg-2 d-md-block bg-light sidebar">
+                    <div class="position-sticky pt-3">
+                        <div class="px-3">
+                            <h5>👤 Admin Profile</h5>
+                            <p><strong>Username:</strong> {{ session.user.username }}</p>
+                            <p><strong>Role:</strong> {{ session.user.role }}</p>
+                        </div>
+                        <hr>
+                        <div class="px-3">
+                            <a href="{{ url_for('admin_users') }}" class="btn btn-primary w-100 mb-2">👥 Users</a>
+                            <a href="{{ url_for('admin_organizations') }}" class="btn btn-primary w-100 mb-2">🏢 Organizations</a>
+                            <a href="{{ url_for('admin_system') }}" class="btn btn-primary w-100 mb-2">⚙️ System</a>
+                            <hr>
+                            <a href="{{ url_for('logout') }}" class="btn btn-secondary w-100">🚪 Logout</a>
+                        </div>
+                    </div>
+                </nav>
+                
+                <main class="main">
+                    <h1>🏢 Organizations Management</h1>
+                    
+                    <div class="card mb-4">
+                        <div class="card-body">
+                            <h5>Add New Organization</h5>
+                            <form id="addOrgForm" onsubmit="return addOrganization(event)">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label class="form-label">Organization Name</label>
+                                            <input type="text" class="form-control" name="name" required>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label class="form-label">&nbsp;</label>
+                                            <button type="submit" class="btn btn-primary w-100">Create Organization</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                    
+                    <div class="card">
+                        <div class="card-body">
+                            <h5>Existing Organizations</h5>
+                            <div class="table-responsive">
+                                <table class="table table-hover">
+                                    <thead>
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>Name</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for org in organizations %}
+                                            <tr>
+                                                <td>{{ org.id }}</td>
+                                                <td>{{ org.name }}</td>
+                                                <td>
+                                                    <div class="btn-group btn-group-sm">
+                                                        <button class="btn btn-outline-primary"
+                                                                onclick="editOrg('{{ org.id }}')">
+                                                            ✏️ Edit
+                                                        </button>
+                                                        <button class="btn btn-outline-danger"
+                                                                onclick="deleteOrg('{{ org.id }}')">
+                                                            🗑️ Delete
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </main>
+                
+                <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+                <script>
+                    function addOrganization(event) {
+                        event.preventDefault();
+                        // Implement add organization functionality
+                        alert('Add organization functionality not implemented yet');
+                        return false;
+                    }
+                    
+                    function editOrg(orgId) {
+                        // Implement edit organization functionality
+                        alert('Edit organization functionality not implemented yet');
+                    }
+                    
+                    function deleteOrg(orgId) {
+                        // Implement delete organization functionality
+                        alert('Delete organization functionality not implemented yet');
+                    }
+                </script>
+            </body>
+            </html>
+        ''', organizations=organizations)
+    except Exception as e:
+        print(f"Error in admin_organizations function: {str(e)}")
+        print(f"Exception type: {type(e).__name__}")
+        flash(f'Error loading organizations page: {str(e)}')
+        return redirect(url_for('admin_dashboard'))
+
+@app.route('/admin_system')
+@login_required
+@role_required(['superadmin'])
+def admin_system():
+    # System settings page
+    try:
+        import sys
+        import flask
+        import time
+        from datetime import datetime
+        
+        return render_template_string('''
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>System Settings - Tableau Data Reporter</title>
+                <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+                <style>
+                    .sidebar {
+                        position: fixed;
+                        top: 0;
+                        bottom: 0;
+                        left: 0;
+                        z-index: 100;
+                        padding: 48px 0 0;
+                        box-shadow: inset -1px 0 0 rgba(0, 0, 0, .1);
+                    }
+                    .main {
+                        margin-left: 240px;
+                        padding: 20px;
+                    }
+                </style>
+            </head>
+            <body>
+                <nav class="col-md-3 col-lg-2 d-md-block bg-light sidebar">
+                    <div class="position-sticky pt-3">
+                        <div class="px-3">
+                            <h5>👤 Admin Profile</h5>
+                            <p><strong>Username:</strong> {{ session.user.username }}</p>
+                            <p><strong>Role:</strong> {{ session.user.role }}</p>
+                        </div>
+                        <hr>
+                        <div class="px-3">
+                            <a href="{{ url_for('admin_users') }}" class="btn btn-primary w-100 mb-2">👥 Users</a>
+                            <a href="{{ url_for('admin_organizations') }}" class="btn btn-primary w-100 mb-2">🏢 Organizations</a>
+                            <a href="{{ url_for('admin_system') }}" class="btn btn-primary w-100 mb-2">⚙️ System</a>
+                            <hr>
+                            <a href="{{ url_for('logout') }}" class="btn btn-secondary w-100">🚪 Logout</a>
+                        </div>
+                    </div>
+                </nav>
+                
+                <main class="main">
+                    <h1>⚙️ System Settings</h1>
+                    
+                    <div class="card mb-4">
+                        <div class="card-body">
+                            <h5>Email Configuration</h5>
+                            <form id="emailConfigForm">
+                                <div class="mb-3">
+                                    <label class="form-label">SMTP Server</label>
+                                    <input type="text" class="form-control" name="smtp_server" 
+                                          value="{{ os.getenv('SMTP_SERVER', '') }}">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">SMTP Port</label>
+                                    <input type="number" class="form-control" name="smtp_port" 
+                                          value="{{ os.getenv('SMTP_PORT', '587') }}">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Sender Email</label>
+                                    <input type="email" class="form-control" name="sender_email" 
+                                          value="{{ os.getenv('SENDER_EMAIL', '') }}">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Sender Password</label>
+                                    <input type="password" class="form-control" name="sender_password" 
+                                          value="{{ os.getenv('SENDER_PASSWORD', '') }}">
+                                </div>
+                                <button type="submit" class="btn btn-primary">Save Settings</button>
+                            </form>
+                        </div>
+                    </div>
+                    
+                    <div class="card mb-4">
+                        <div class="card-body">
+                            <h5>Database Management</h5>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label class="form-label">Backup Database</label>
+                                        <button class="btn btn-primary w-100" onclick="backupDatabase()">
+                                            Create Backup
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label class="form-label">Restore Database</label>
+                                        <input type="file" class="form-control" id="restoreFile" accept=".db">
+                                        <button class="btn btn-warning w-100 mt-2" onclick="restoreDatabase()">
+                                            Restore from Backup
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="card">
+                        <div class="card-body">
+                            <h5>System Information</h5>
+                            <div class="table-responsive">
+                                <table class="table">
+                                    <tbody>
+                                        <tr>
+                                            <th>Python Version</th>
+                                            <td>{{ sys.version.split()[0] }}</td>
+                                        </tr>
+                                        <tr>
+                                            <th>Flask Version</th>
+                                            <td>{{ flask.__version__ }}</td>
+                                        </tr>
+                                        <tr>
+                                            <th>Server Time</th>
+                                            <td>{{ datetime.now().strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                                        </tr>
+                                        <tr>
+                                            <th>Server Timezone</th>
+                                            <td>{{ time.tzname[0] }}</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </main>
+                
+                <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+                <script>
+                    document.getElementById('emailConfigForm').addEventListener('submit', function(e) {
+                        e.preventDefault();
+                        // Implement save email settings functionality
+                        alert('Save email settings functionality not implemented yet');
+                    });
+                    
+                    function backupDatabase() {
+                        // Implement backup database functionality
+                        alert('Backup database functionality not implemented yet');
+                    }
+                    
+                    function restoreDatabase() {
+                        // Implement restore database functionality
+                        alert('Restore database functionality not implemented yet');
+                    }
+                </script>
+            </body>
+            </html>
+        ''', os=os, sys=sys, flask=flask, time=time, datetime=datetime)
+    except Exception as e:
+        print(f"Error in admin_system function: {str(e)}")
+        print(f"Exception type: {type(e).__name__}")
+        flash(f'Error loading system settings page: {str(e)}')
+        return redirect(url_for('admin_dashboard'))
+
+@app.route('/api/users/<user_id>', methods=['GET'])
+@login_required
+@role_required(['superadmin'])
+def get_user_api(user_id):
+    try:
+        with sqlite3.connect('data/tableau_data.db') as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT u.rowid, u.username, u.email, u.role, u.organization_id
+                FROM users u
+                WHERE u.rowid = ?
+            """, (user_id,))
+            user_data = cursor.fetchone()
+            
+            if not user_data:
+                return jsonify({'success': False, 'error': 'User not found'})
+                
+            user = {
+                'id': user_data[0],
+                'username': user_data[1],
+                'email': user_data[2],
+                'role': user_data[3],
+                'organization_id': user_data[4] or ''
+            }
+            
+            return jsonify({'success': True, 'user': user})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/users/<user_id>', methods=['PUT'])
+@login_required
+@role_required(['superadmin'])
+def update_user_api(user_id):
+    try:
+        data = request.json
+        
+        # Prepare the update data
+        update_data = {
+            'username': data.get('username'),
+            'email': data.get('email'),
+            'role': data.get('permission_type'),  # Map permission_type to role
+            'organization_id': data.get('organization_id') or None
+        }
+        
+        # Only include password if it was provided and not empty
+        if data.get('password') and data.get('password').strip():
+            update_data['password_hash'] = generate_password_hash(data['password'])
+        
+        # Update the user in the database
+        with sqlite3.connect('data/tableau_data.db') as conn:
+            cursor = conn.cursor()
+            
+            # Construct the SET clause dynamically based on what fields are provided
+            set_clause = ", ".join([f"{key} = ?" for key in update_data.keys()])
+            values = list(update_data.values())
+            values.append(user_id)  # For the WHERE clause
+            
+            query = f"UPDATE users SET {set_clause} WHERE rowid = ?"
+            cursor.execute(query, values)
+            conn.commit()
+            
+            if cursor.rowcount == 0:
+                return jsonify({'success': False, 'error': 'User not found or no changes made'})
+            
+            return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 

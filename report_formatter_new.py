@@ -95,59 +95,100 @@ class ReportFormatter:
             
         # Page settings
         if format_config.get('page_size'):
-            self.page_size = A4 if format_config['page_size'].upper() == 'A4' else letter
+            page_size_value = format_config['page_size']
+            if isinstance(page_size_value, str):
+                # Handle string page sizes
+                if page_size_value.upper() == 'A4':
+                    self.page_size = A4
+                elif page_size_value.upper() == 'LETTER':
+                    self.page_size = letter
+                else:
+                    # Default to A4 for unknown string values
+                    print(f"Unknown page size: {page_size_value}, using A4")
+                    self.page_size = A4
+            else:
+                # If it's already a ReportLab page size tuple, use it directly
+                self.page_size = page_size_value
         
         if format_config.get('orientation'):
             self.orientation = format_config['orientation'].lower()
         
+        # Handle margins with proper type conversion
         if format_config.get('margins'):
-            margins = format_config['margins']
-            self.margins = (
-                margins.get('left', 0.5) * inch,
-                margins.get('right', 0.5) * inch,
-                margins.get('top', 0.5) * inch,
-                margins.get('bottom', 0.5) * inch
-            )
+            try:
+                margins = format_config['margins']
+                # Check if margins is a dictionary or a tuple
+                if isinstance(margins, dict):
+                    # Create a new tuple with proper numeric values
+                    left = float(margins.get('left', 0.5)) * inch
+                    right = float(margins.get('right', 0.5)) * inch
+                    top = float(margins.get('top', 0.5)) * inch
+                    bottom = float(margins.get('bottom', 0.5)) * inch
+                    self.margins = (left, right, top, bottom)
+                elif isinstance(margins, (list, tuple)) and len(margins) == 4:
+                    # Convert all values to float * inch
+                    self.margins = tuple(float(m) * inch for m in margins)
+                else:
+                    print(f"Invalid margins format: {margins}, using defaults")
+                    self.margins = (0.5*inch, 0.5*inch, 0.5*inch, 0.5*inch)
+            except (TypeError, ValueError, KeyError) as e:
+                print(f"Error converting margins, using defaults: {str(e)}")
+                self.margins = (0.5*inch, 0.5*inch, 0.5*inch, 0.5*inch)
+        else:
+            # Ensure margins is always set
+            self.margins = (0.5*inch, 0.5*inch, 0.5*inch, 0.5*inch)
         
         # Title style
         if format_config.get('title_style'):
             title_style = format_config['title_style']
-            self.title_style = ParagraphStyle(
-                'CustomTitle',
-                parent=self.styles['Title'],
-                fontName=title_style.get('fontName', 'Helvetica'),
-                fontSize=title_style.get('fontSize', 24),
-                textColor=colors.HexColor(title_style.get('textColor', '#000000')),
-                alignment=title_style.get('alignment', TA_CENTER),
-                spaceAfter=title_style.get('spaceAfter', 30)
-            )
+            try:
+                self.title_style = ParagraphStyle(
+                    'CustomTitle',
+                    parent=self.styles['Title'],
+                    fontName=str(title_style.get('fontName', 'Helvetica')),
+                    fontSize=int(title_style.get('fontSize', 24)),
+                    textColor=colors.HexColor(str(title_style.get('textColor', '#000000'))),
+                    alignment=title_style.get('alignment', TA_CENTER),
+                    spaceAfter=float(title_style.get('spaceAfter', 30))
+                )
+            except (TypeError, ValueError) as e:
+                print(f"Error setting title style, using defaults: {str(e)}")
+                self._set_default_styles()
         
         # Table style
         if format_config.get('table_style'):
             table_style = format_config['table_style']
-            self.table_style = TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor(table_style.get('headerColor', '#2d5d7b'))),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), table_style.get('fontSize', 10)),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor(table_style.get('rowColor', '#f5f5f5'))),
-                ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
-                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 1), (-1, -1), table_style.get('fontSize', 10) - 2),
-                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor(table_style.get('gridColor', '#808080'))),
-                ('ROWHEIGHT', (0, 0), (-1, -1), table_style.get('rowHeight', 20)),
-                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ])
+            try:
+                self.table_style = TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor(str(table_style.get('headerColor', '#2d5d7b')))),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), int(table_style.get('fontSize', 10))),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor(str(table_style.get('rowColor', '#f5f5f5')))),
+                    ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
+                    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                    ('FONTSIZE', (0, 1), (-1, -1), int(table_style.get('fontSize', 10)) - 2),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.HexColor(str(table_style.get('gridColor', '#808080')))),
+                    ('ROWHEIGHT', (0, 0), (-1, -1), float(table_style.get('rowHeight', 20))),
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ])
+            except (TypeError, ValueError) as e:
+                print(f"Error setting table style, using defaults: {str(e)}")
+                self._set_default_styles()
         
         # Chart size
         if format_config.get('chart_size'):
-            chart_size = format_config['chart_size']
-            self.chart_size = (
-                chart_size.get('width', 6) * inch,
-                chart_size.get('height', 4) * inch
-            )
+            try:
+                chart_size = format_config['chart_size']
+                self.chart_size = (
+                    float(chart_size.get('width', 6)) * inch,
+                    float(chart_size.get('height', 4)) * inch
+                )
+            except (TypeError, ValueError) as e:
+                print(f"Error setting chart size, using defaults: {str(e)}")
+                self.chart_size = (6*inch, 4*inch)
         
         # Header image
         if format_config.get('header_image'):
@@ -155,7 +196,7 @@ class ReportFormatter:
         
         # Footer text
         if format_config.get('footer_text'):
-            self.footer_text = format_config['footer_text']
+            self.footer_text = str(format_config['footer_text'])
     
     def generate_report(self, df: pd.DataFrame, report_title: str = "Data Report",
                        include_row_count: bool = True, include_totals: bool = True,
@@ -163,19 +204,63 @@ class ReportFormatter:
         """Generate a formatted PDF report"""
         buffer = io.BytesIO()
         
-        # Set up the document
-        page_size = self.page_size
-        if self.orientation == 'landscape':
-            page_size = landscape(page_size)
-        
-        doc = SimpleDocTemplate(
-            buffer,
-            pagesize=page_size,
-            leftMargin=self.margins[0],
-            rightMargin=self.margins[1],
-            topMargin=self.margins[2],
-            bottomMargin=self.margins[3]
-        )
+        # Set up the document with guaranteed valid values
+        try:
+            # Ensure page_size is valid
+            if isinstance(self.page_size, str):
+                print(f"Converting string page size '{self.page_size}' to A4")
+                page_size = A4
+            else:
+                page_size = self.page_size
+                
+            # Verify page_size is a valid tuple
+            if not isinstance(page_size, tuple) or len(page_size) != 2:
+                print(f"Invalid page size format: {page_size}, using A4")
+                page_size = A4
+                
+            # Apply orientation
+            if self.orientation == 'landscape':
+                page_size = landscape(page_size)
+                
+            # Explicitly create valid margin values
+            left_margin = 0.5 * inch
+            right_margin = 0.5 * inch
+            top_margin = 0.5 * inch
+            bottom_margin = 0.5 * inch
+            
+            # If margins is valid, try to use those values
+            if isinstance(self.margins, tuple) and len(self.margins) == 4:
+                try:
+                    left_margin = float(self.margins[0])
+                    right_margin = float(self.margins[1])
+                    top_margin = float(self.margins[2])
+                    bottom_margin = float(self.margins[3])
+                except (ValueError, TypeError):
+                    print("Error converting margin values to float, using defaults")
+            else:
+                print(f"Invalid margins format: {self.margins}, using defaults")
+            
+            # Create document with explicit validated values
+            doc = SimpleDocTemplate(
+                buffer,
+                pagesize=page_size,
+                leftMargin=left_margin,
+                rightMargin=right_margin,
+                topMargin=top_margin,
+                bottomMargin=bottom_margin
+            )
+        except Exception as e:
+            print(f"Error creating document with custom settings: {str(e)}")
+            print("Falling back to absolute defaults")
+            # Use absolute defaults as fallback
+            doc = SimpleDocTemplate(
+                buffer,
+                pagesize=A4,
+                leftMargin=0.5*inch,
+                rightMargin=0.5*inch,
+                topMargin=0.5*inch,
+                bottomMargin=0.5*inch
+            )
         
         # Start building content
         elements = []
