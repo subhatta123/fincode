@@ -1815,6 +1815,635 @@ def update_user_api(user_id):
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
+@app.route('/tableau-connect', endpoint='tableau_connect')
+@login_required
+def tableau_connect():
+    """Page to connect to Tableau Server and download data"""
+    return render_template_string('''
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Connect to Tableau - Tableau Data Reporter</title>
+            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+            <style>
+                body { padding: 20px; }
+                .form-container {
+                    max-width: 800px;
+                    margin: 0 auto;
+                }
+                .card {
+                    margin-bottom: 20px;
+                }
+                .loading {
+                    display: none;
+                    text-align: center;
+                    padding: 20px;
+                }
+                .loading-spinner {
+                    width: 3rem;
+                    height: 3rem;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="form-container">
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <h1>Connect to Tableau Server</h1>
+                        <a href="{{ url_for('home') }}" class="btn btn-outline-primary">← Back to Dashboard</a>
+                    </div>
+                    
+                    {% with messages = get_flashed_messages() %}
+                        {% if messages %}
+                            {% for message in messages %}
+                                <div class="alert alert-info">{{ message }}</div>
+                            {% endfor %}
+                        {% endif %}
+                    {% endwith %}
+                    
+                    <div class="card">
+                        <div class="card-body">
+                            <h5 class="card-title">Connection Details</h5>
+                            <form id="connectionForm" method="post" action="{{ url_for('process_tableau_connection') }}">
+                                <div class="mb-3">
+                                    <label class="form-label">Tableau Server URL</label>
+                                    <input type="text" class="form-control" name="server_url" 
+                                           placeholder="https://your-server.tableau.com" required>
+                                    <div class="form-text">Include https:// and don't include a trailing slash</div>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label class="form-label">Site Name (leave empty for Default)</label>
+                                    <input type="text" class="form-control" name="site_name" 
+                                           placeholder="Site name (not URL)">
+                                    <div class="form-text">For default site, leave this blank</div>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label class="form-label">Authentication Method</label>
+                                    <select class="form-select" name="auth_method" id="authMethod" required>
+                                        <option value="password">Username / Password</option>
+                                        <option value="token">Personal Access Token</option>
+                                    </select>
+                                </div>
+                                
+                                <!-- Username/Password Auth Fields -->
+                                <div id="userPassAuth">
+                                    <div class="mb-3">
+                                        <label class="form-label">Username</label>
+                                        <input type="text" class="form-control" name="username">
+                                    </div>
+                                    
+                                    <div class="mb-3">
+                                        <label class="form-label">Password</label>
+                                        <input type="password" class="form-control" name="password">
+                                    </div>
+                                </div>
+                                
+                                <!-- Token Auth Fields -->
+                                <div id="tokenAuth" style="display: none;">
+                                    <div class="mb-3">
+                                        <label class="form-label">Personal Access Token Name</label>
+                                        <input type="text" class="form-control" name="token_name">
+                                    </div>
+                                    
+                                    <div class="mb-3">
+                                        <label class="form-label">Personal Access Token Value</label>
+                                        <input type="password" class="form-control" name="token_value">
+                                    </div>
+                                </div>
+                                
+                                <button type="submit" class="btn btn-primary" id="connectButton">
+                                    Connect to Tableau
+                                </button>
+                            </form>
+                            
+                            <div id="loadingIndicator" class="loading">
+                                <div class="spinner-border loading-spinner text-primary" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                                <p class="mt-3">Connecting to Tableau and retrieving workbooks... This may take a minute.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+            <script>
+                // Toggle auth method fields
+                document.getElementById('authMethod').addEventListener('change', function() {
+                    const authMethod = this.value;
+                    if (authMethod === 'password') {
+                        document.getElementById('userPassAuth').style.display = 'block';
+                        document.getElementById('tokenAuth').style.display = 'none';
+                    } else {
+                        document.getElementById('userPassAuth').style.display = 'none';
+                        document.getElementById('tokenAuth').style.display = 'block';
+                    }
+                });
+                
+                // Show loading indicator on form submit
+                document.getElementById('connectionForm').addEventListener('submit', function() {
+                    document.getElementById('connectButton').disabled = true;
+                    document.getElementById('loadingIndicator').style.display = 'block';
+                });
+            </script>
+        </body>
+        </html>
+    ''')
+
+@app.route('/process-tableau-connection', methods=['POST'], endpoint='process_tableau_connection')
+@login_required
+def process_tableau_connection():
+    """Process the Tableau Server connection form"""
+    try:
+        # Get form data
+        server_url = request.form.get('server_url')
+        site_name = request.form.get('site_name')
+        auth_method = request.form.get('auth_method')
+        
+        if not server_url:
+            flash('Server URL is required')
+            return redirect(url_for('tableau_connect'))
+        
+        # Process auth credentials based on method
+        credentials = {}
+        if auth_method == 'password':
+            username = request.form.get('username')
+            password = request.form.get('password')
+            if not username or not password:
+                flash('Username and password are required for password authentication')
+                return redirect(url_for('tableau_connect'))
+            credentials = {'username': username, 'password': password}
+        else:  # token auth
+            token_name = request.form.get('token_name')
+            token_value = request.form.get('token_value')
+            if not token_name or not token_value:
+                flash('Token name and value are required for token authentication')
+                return redirect(url_for('tableau_connect'))
+            credentials = {'token_name': token_name, 'token': token_value}
+        
+        # Authenticate with Tableau
+        try:
+            print(f"Connecting to Tableau Server: {server_url}")
+            server = authenticate(server_url, auth_method, credentials, site_name)
+            if not server:
+                flash('Authentication failed. Please check your credentials and try again.')
+                return redirect(url_for('tableau_connect'))
+            
+            # Get workbooks
+            workbooks = get_workbooks(server)
+            if not workbooks:
+                flash('No workbooks found or failed to retrieve workbooks')
+                return redirect(url_for('tableau_connect'))
+            
+            # Store in session for next step
+            session['tableau_server'] = {
+                'server_url': server_url,
+                'site_name': site_name,
+                'auth_method': auth_method,
+                'credentials': credentials  # Note: In production, consider more secure storage
+            }
+            session['tableau_workbooks'] = workbooks
+            
+            # Redirect to select workbook page
+            return redirect(url_for('select_tableau_workbook'))
+            
+        except Exception as e:
+            flash(f'Error connecting to Tableau: {str(e)}')
+            return redirect(url_for('tableau_connect'))
+        
+    except Exception as e:
+        flash(f'Error processing form: {str(e)}')
+        return redirect(url_for('tableau_connect'))
+
+@app.route('/select-tableau-workbook', endpoint='select_tableau_workbook')
+@login_required
+def select_tableau_workbook():
+    """Page to select a workbook and views to download"""
+    # Check if we have workbooks in session
+    if 'tableau_workbooks' not in session:
+        flash('Please connect to Tableau first')
+        return redirect(url_for('tableau_connect'))
+    
+    workbooks = session['tableau_workbooks']
+    
+    return render_template_string('''
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Select Workbook - Tableau Data Reporter</title>
+            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+            <style>
+                body { padding: 20px; }
+                .form-container {
+                    max-width: 800px;
+                    margin: 0 auto;
+                }
+                .card {
+                    margin-bottom: 20px;
+                }
+                .loading {
+                    display: none;
+                    text-align: center;
+                    padding: 20px;
+                }
+                .loading-spinner {
+                    width: 3rem;
+                    height: 3rem;
+                }
+                .workbook-card {
+                    cursor: pointer;
+                }
+                .workbook-card:hover {
+                    border-color: #0d6efd;
+                }
+                .workbook-card.selected {
+                    border-color: #0d6efd;
+                    background-color: rgba(13, 110, 253, 0.1);
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="form-container">
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <h1>Select Tableau Workbook</h1>
+                        <a href="{{ url_for('tableau_connect') }}" class="btn btn-outline-primary">← Back</a>
+                    </div>
+                    
+                    {% with messages = get_flashed_messages() %}
+                        {% if messages %}
+                            {% for message in messages %}
+                                <div class="alert alert-info">{{ message }}</div>
+                            {% endfor %}
+                        {% endif %}
+                    {% endwith %}
+                    
+                    <div class="card mb-4">
+                        <div class="card-body">
+                            <h5 class="card-title">Available Workbooks</h5>
+                            
+                            {% if workbooks %}
+                                <form id="workbookForm" method="post" action="{{ url_for('process_workbook_selection') }}">
+                                    <div class="row">
+                                        {% for workbook in workbooks %}
+                                            <div class="col-md-6 mb-3">
+                                                <div class="card workbook-card h-100" onclick="selectWorkbook('{{ workbook.id }}')">
+                                                    <div class="card-body">
+                                                        <h5 class="card-title">{{ workbook.name }}</h5>
+                                                        <p class="card-text text-muted">Project: {{ workbook.project_name }}</p>
+                                                        
+                                                        {% if workbook.views %}
+                                                            <div class="form-check form-switch mb-2">
+                                                                <input class="form-check-input workbook-selector" 
+                                                                       type="checkbox" 
+                                                                       id="workbook-{{ workbook.id }}" 
+                                                                       name="workbook" 
+                                                                       value="{{ workbook.id }}"
+                                                                       data-name="{{ workbook.name }}">
+                                                                <label class="form-check-label" for="workbook-{{ workbook.id }}">
+                                                                    Select this workbook
+                                                                </label>
+                                                            </div>
+                                                            
+                                                            <div class="views-container" style="display: none;" id="views-{{ workbook.id }}">
+                                                                <hr>
+                                                                <h6>Available Views:</h6>
+                                                                <div class="mb-2">
+                                                                    <button type="button" class="btn btn-sm btn-outline-secondary mb-2"
+                                                                            onclick="selectAllViews('{{ workbook.id }}')">
+                                                                        Select All
+                                                                    </button>
+                                                                    <button type="button" class="btn btn-sm btn-outline-secondary mb-2"
+                                                                            onclick="deselectAllViews('{{ workbook.id }}')">
+                                                                        Deselect All
+                                                                    </button>
+                                                                </div>
+                                                                
+                                                                {% for view in workbook.views %}
+                                                                    <div class="form-check">
+                                                                        <input class="form-check-input view-selector-{{ workbook.id }}" 
+                                                                               type="checkbox" 
+                                                                               id="view-{{ view.id }}" 
+                                                                               name="views-{{ workbook.id }}" 
+                                                                               value="{{ view.id }}"
+                                                                               data-name="{{ view.name }}">
+                                                                        <label class="form-check-label" for="view-{{ view.id }}">
+                                                                            {{ view.name }}
+                                                                        </label>
+                                                                    </div>
+                                                                {% endfor %}
+                                                            </div>
+                                                        {% else %}
+                                                            <p class="text-muted">No views available</p>
+                                                        {% endif %}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        {% endfor %}
+                                    </div>
+                                    
+                                    <div class="mb-3">
+                                        <label class="form-label">Dataset Name (will be used in the database)</label>
+                                        <input type="text" class="form-control" name="dataset_name" id="datasetName" required>
+                                        <div class="form-text">This name will be used to identify the dataset in the database</div>
+                                    </div>
+                                    
+                                    <button type="submit" class="btn btn-primary" id="downloadButton">
+                                        Download Selected Views
+                                    </button>
+                                </form>
+                                
+                                <div id="loadingIndicator" class="loading">
+                                    <div class="spinner-border loading-spinner text-primary" role="status">
+                                        <span class="visually-hidden">Loading...</span>
+                                    </div>
+                                    <p class="mt-3">Downloading data from Tableau... This may take a few minutes for large datasets.</p>
+                                </div>
+                            {% else %}
+                                <div class="alert alert-info">
+                                    No workbooks found. Please check your permissions or try a different site.
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+            <script>
+                // Select workbook and show views
+                function selectWorkbook(workbookId) {
+                    const checkbox = document.getElementById('workbook-' + workbookId);
+                    checkbox.checked = !checkbox.checked;
+                    
+                    updateViewsVisibility(workbookId);
+                    updateDatasetName();
+                }
+                
+                // Show/hide views based on workbook selection
+                function updateViewsVisibility(workbookId) {
+                    const checkbox = document.getElementById('workbook-' + workbookId);
+                    const viewsContainer = document.getElementById('views-' + workbookId);
+                    const workbookCard = checkbox.closest('.workbook-card');
+                    
+                    if (checkbox.checked) {
+                        viewsContainer.style.display = 'block';
+                        workbookCard.classList.add('selected');
+                    } else {
+                        viewsContainer.style.display = 'none';
+                        workbookCard.classList.remove('selected');
+                        // Uncheck all views
+                        document.querySelectorAll('.view-selector-' + workbookId).forEach(view => {
+                            view.checked = false;
+                        });
+                    }
+                }
+                
+                // Select all views for a workbook
+                function selectAllViews(workbookId) {
+                    document.querySelectorAll('.view-selector-' + workbookId).forEach(view => {
+                        view.checked = true;
+                    });
+                }
+                
+                // Deselect all views for a workbook
+                function deselectAllViews(workbookId) {
+                    document.querySelectorAll('.view-selector-' + workbookId).forEach(view => {
+                        view.checked = false;
+                    });
+                }
+                
+                // Auto-generate dataset name based on selections
+                function updateDatasetName() {
+                    const selectedWorkbooks = [];
+                    document.querySelectorAll('.workbook-selector:checked').forEach(workbook => {
+                        selectedWorkbooks.push(workbook.dataset.name);
+                    });
+                    
+                    if (selectedWorkbooks.length > 0) {
+                        document.getElementById('datasetName').value = selectedWorkbooks.join('_').replace(/[^a-zA-Z0-9]/g, '_');
+                    } else {
+                        document.getElementById('datasetName').value = '';
+                    }
+                }
+                
+                // Add event listeners to all workbook checkboxes
+                document.querySelectorAll('.workbook-selector').forEach(checkbox => {
+                    checkbox.addEventListener('change', function() {
+                        const workbookId = this.value;
+                        updateViewsVisibility(workbookId);
+                        updateDatasetName();
+                    });
+                });
+                
+                // Show loading indicator on form submit
+                document.getElementById('workbookForm').addEventListener('submit', function(e) {
+                    // Validate that at least one view is selected
+                    let hasSelectedView = false;
+                    document.querySelectorAll('.workbook-selector:checked').forEach(workbook => {
+                        const workbookId = workbook.value;
+                        document.querySelectorAll('.view-selector-' + workbookId + ':checked').forEach(() => {
+                            hasSelectedView = true;
+                        });
+                    });
+                    
+                    if (!hasSelectedView) {
+                        e.preventDefault();
+                        alert('Please select at least one view to download');
+                        return;
+                    }
+                    
+                    document.getElementById('downloadButton').disabled = true;
+                    document.getElementById('loadingIndicator').style.display = 'block';
+                });
+            </script>
+        </body>
+        </html>
+    ''', workbooks=workbooks)
+
+@app.route('/process-workbook-selection', methods=['POST'], endpoint='process_workbook_selection')
+@login_required
+def process_workbook_selection():
+    """Process the workbook and views selection and download data"""
+    try:
+        # Check if we have server info in session
+        if 'tableau_server' not in session or 'tableau_workbooks' not in session:
+            flash('Session expired. Please connect to Tableau again.')
+            return redirect(url_for('tableau_connect'))
+        
+        # Get selected workbook and views
+        workbook_id = request.form.get('workbook')
+        views_key = f'views-{workbook_id}'
+        view_ids = request.form.getlist(views_key)
+        dataset_name = request.form.get('dataset_name')
+        
+        if not workbook_id or not view_ids or not dataset_name:
+            flash('Please select a workbook, at least one view, and provide a dataset name')
+            return redirect(url_for('select_tableau_workbook'))
+        
+        # Find workbook details in session
+        workbooks = session['tableau_workbooks']
+        selected_workbook = None
+        for wb in workbooks:
+            if wb['id'] == workbook_id:
+                selected_workbook = wb
+                break
+        
+        if not selected_workbook:
+            flash('Selected workbook not found')
+            return redirect(url_for('select_tableau_workbook'))
+        
+        # Get view names for the selected views
+        view_names = []
+        for view in selected_workbook['views']:
+            if view['id'] in view_ids:
+                view_names.append(view['name'])
+        
+        # Re-authenticate with Tableau
+        server_info = session['tableau_server']
+        try:
+            server = authenticate(
+                server_info['server_url'], 
+                server_info['auth_method'], 
+                server_info['credentials'], 
+                server_info['site_name']
+            )
+            
+            if not server:
+                flash('Re-authentication failed. Please try connecting again.')
+                return redirect(url_for('tableau_connect'))
+                
+            # Generate table name
+            table_name = generate_table_name(selected_workbook['name'], view_names)
+            if dataset_name:
+                # Use dataset_name if provided, but sanitize it for SQLite
+                table_name = ''.join(c if c.isalnum() else '_' for c in dataset_name)
+                if not table_name[0].isalpha():
+                    table_name = 'table_' + table_name
+            
+            # Download data
+            success = download_and_save_data(
+                server, 
+                view_ids,
+                selected_workbook['name'],
+                view_names,
+                table_name
+            )
+            
+            if success:
+                flash(f'Data downloaded successfully and saved as "{table_name}"')
+                return redirect(url_for('home'))
+            else:
+                flash('Failed to download data from Tableau')
+                return redirect(url_for('select_tableau_workbook'))
+                
+        except Exception as e:
+            flash(f'Error downloading data: {str(e)}')
+            return redirect(url_for('select_tableau_workbook'))
+        
+    except Exception as e:
+        flash(f'Error processing selection: {str(e)}')
+        return redirect(url_for('select_tableau_workbook'))
+
+@app.route('/schedule-reports', endpoint='schedule_reports')
+@login_required
+def schedule_reports():
+    """Page to schedule reports"""
+    return render_template_string('''
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Schedule Reports - Tableau Data Reporter</title>
+            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+            <style>
+                body { padding: 20px; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h1>Schedule Reports</h1>
+                    <a href="{{ url_for('home') }}" class="btn btn-outline-primary">← Back to Dashboard</a>
+                </div>
+                
+                <div class="alert alert-info">
+                    <p>Please select a dataset and configure your report schedule.</p>
+                    <a href="{{ url_for('home') }}" class="btn btn-primary">
+                        Go to Datasets
+                    </a>
+                </div>
+            </div>
+        </body>
+        </html>
+    ''')
+
+@app.route('/manage-schedules', endpoint='manage_schedules')
+@login_required
+def manage_schedules():
+    """Page to manage existing schedules"""
+    return render_template_string('''
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Manage Schedules - Tableau Data Reporter</title>
+            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+            <style>
+                body { padding: 20px; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h1>Manage Schedules</h1>
+                    <a href="{{ url_for('home') }}" class="btn btn-outline-primary">← Back to Dashboard</a>
+                </div>
+                
+                <div class="alert alert-info">
+                    <p>No schedules found. Create a schedule from your datasets page.</p>
+                    <a href="{{ url_for('home') }}" class="btn btn-primary">
+                        Go to Datasets
+                    </a>
+                </div>
+            </div>
+        </body>
+        </html>
+    ''')
+
+@app.route('/schedule-dataset/<dataset>', endpoint='schedule_dataset')
+@login_required
+def schedule_dataset(dataset):
+    """Page to schedule a specific dataset"""
+    return render_template_string('''
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Schedule Dataset - Tableau Data Reporter</title>
+            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+            <style>
+                body { padding: 20px; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h1>Schedule Dataset: {{ dataset }}</h1>
+                    <a href="{{ url_for('home') }}" class="btn btn-outline-primary">← Back to Dashboard</a>
+                </div>
+                
+                <div class="alert alert-info">
+                    <p>Scheduling functionality is under development.</p>
+                    <a href="{{ url_for('home') }}" class="btn btn-primary">
+                        Return to Dashboard
+                    </a>
+                </div>
+            </div>
+        </body>
+        </html>
+    ''', dataset=dataset)
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8501))
     app.run(host='0.0.0.0', port=port) 
