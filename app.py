@@ -2964,33 +2964,378 @@ def manage_schedules():
 @login_required
 def schedule_dataset(dataset):
     """Page to schedule a specific dataset"""
+    # Get dataset info
+    row_count = get_dataset_row_count(dataset)
+    
+    # Get user email for pre-filling
+    user_email = ""
+    if 'user' in session and 'email' in session['user']:
+        user_email = session['user']['email']
+    
     return render_template_string('''
         <!DOCTYPE html>
         <html>
         <head>
             <title>Schedule Dataset - Tableau Data Reporter</title>
             <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
             <style>
                 body { padding: 20px; }
+                .form-container {
+                    max-width: 900px;
+                    margin: 0 auto;
+                }
+                .section-title {
+                    margin-top: 1.5rem;
+                    margin-bottom: 1rem;
+                    font-weight: 600;
+                }
+                .recipient-row {
+                    display: flex;
+                    gap: 10px;
+                    margin-bottom: 10px;
+                    align-items: center;
+                }
+                .recipient-row button {
+                    flex-shrink: 0;
+                }
+                .schedule-type-container {
+                    border: 1px solid #dee2e6;
+                    border-radius: 0.25rem;
+                    padding: 1rem;
+                    margin-bottom: 1rem;
+                }
+                .days-container {
+                    display: flex;
+                    gap: 10px;
+                    flex-wrap: wrap;
+                }
             </style>
         </head>
         <body>
             <div class="container">
-                <div class="d-flex justify-content-between align-items-center mb-4">
-                    <h1>Schedule Dataset: {{ dataset }}</h1>
-                    <a href="{{ url_for('home') }}" class="btn btn-outline-primary">← Back to Dashboard</a>
-                </div>
-                
-                <div class="alert alert-info">
-                    <p>Scheduling functionality is under development.</p>
-                    <a href="{{ url_for('home') }}" class="btn btn-primary">
-                        Return to Dashboard
-                    </a>
+                <div class="form-container">
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <h1>Schedule Dataset: {{ dataset }}</h1>
+                        <a href="{{ url_for('home') }}" class="btn btn-outline-primary">← Back to Dashboard</a>
+                    </div>
+                    
+                    {% with messages = get_flashed_messages() %}
+                        {% if messages %}
+                            {% for message in messages %}
+                                <div class="alert alert-info">{{ message }}</div>
+                            {% endfor %}
+                        {% endif %}
+                    {% endwith %}
+                    
+                    <div class="card mb-4">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h5 class="card-title mb-0">Dataset Information</h5>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <p><strong>Name:</strong> {{ dataset }}</p>
+                                </div>
+                                <div class="col-md-6">
+                                    <p><strong>Number of Rows:</strong> {{ row_count }}</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <form action="{{ url_for('process_schedule_form') }}" method="post">
+                        <input type="hidden" name="dataset_name" value="{{ dataset }}">
+                        
+                        <div class="card mb-4">
+                            <div class="card-body">
+                                <h5 class="card-title">Schedule Settings</h5>
+                                
+                                <div class="mb-3">
+                                    <label class="form-label">Schedule Type</label>
+                                    <select class="form-select" name="schedule_type" id="scheduleType" required>
+                                        <option value="one-time">One-time</option>
+                                        <option value="daily">Daily</option>
+                                        <option value="weekly">Weekly</option>
+                                        <option value="monthly">Monthly</option>
+                                    </select>
+                                </div>
+                                
+                                <div class="schedule-type-container" id="oneTimeSettings">
+                                    <div class="mb-3">
+                                        <label class="form-label">Date</label>
+                                        <input type="date" class="form-control" name="date" id="oneTimeDate" 
+                                              min="{{ today }}">
+                                    </div>
+                                </div>
+                                
+                                <div class="schedule-type-container" id="weeklySettings" style="display: none;">
+                                    <label class="form-label">Days of Week</label>
+                                    <div class="days-container">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" name="days" value="Monday" id="monday">
+                                            <label class="form-check-label" for="monday">Monday</label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" name="days" value="Tuesday" id="tuesday">
+                                            <label class="form-check-label" for="tuesday">Tuesday</label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" name="days" value="Wednesday" id="wednesday">
+                                            <label class="form-check-label" for="wednesday">Wednesday</label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" name="days" value="Thursday" id="thursday">
+                                            <label class="form-check-label" for="thursday">Thursday</label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" name="days" value="Friday" id="friday">
+                                            <label class="form-check-label" for="friday">Friday</label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" name="days" value="Saturday" id="saturday">
+                                            <label class="form-check-label" for="saturday">Saturday</label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" name="days" value="Sunday" id="sunday">
+                                            <label class="form-check-label" for="sunday">Sunday</label>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="schedule-type-container" id="monthlySettings" style="display: none;">
+                                    <div class="mb-3">
+                                        <label class="form-label">Day of Month</label>
+                                        <select class="form-select" name="day" id="monthlyDay">
+                                            {% for i in range(1, 32) %}
+                                                <option value="{{ i }}">{{ i }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </div>
+                                </div>
+                                
+                                <div class="row">
+                                    <div class="col-md-4">
+                                        <div class="mb-3">
+                                            <label class="form-label">Time</label>
+                                            <div class="input-group">
+                                                <input type="number" class="form-control" name="hour" min="0" max="23" value="9" required>
+                                                <span class="input-group-text">:</span>
+                                                <input type="number" class="form-control" name="minute" min="0" max="59" value="0" required>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-8">
+                                        <div class="mb-3">
+                                            <label class="form-label">Timezone</label>
+                                            <select class="form-select" name="timezone" required>
+                                                {% for tz in timezones %}
+                                                    <option value="{{ tz }}">{{ tz }}</option>
+                                                {% endfor %}
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="card mb-4">
+                            <div class="card-body">
+                                <h5 class="card-title">Email Settings</h5>
+                                
+                                <div class="mb-3">
+                                    <label class="form-label">Subject</label>
+                                    <input type="text" class="form-control" name="subject" value="Report for {{ dataset }}" required>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label class="form-label">Message</label>
+                                    <textarea class="form-control" name="body" rows="3">Please find the attached report for {{ dataset }}.</textarea>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label class="form-label">Recipients (To)</label>
+                                    <div id="recipientsContainer">
+                                        <div class="recipient-row">
+                                            <input type="email" class="form-control" name="recipients" value="{{ user_email }}" required>
+                                            <button type="button" class="btn btn-outline-danger" onclick="removeRecipient(this)" disabled>Remove</button>
+                                        </div>
+                                    </div>
+                                    <button type="button" class="btn btn-outline-primary btn-sm mt-2" onclick="addRecipient('recipients')">
+                                        + Add Recipient
+                                    </button>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label class="form-label">CC</label>
+                                    <div id="ccContainer"></div>
+                                    <button type="button" class="btn btn-outline-primary btn-sm mt-2" onclick="addRecipient('cc')">
+                                        + Add CC
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="card mb-4">
+                            <div class="card-body">
+                                <h5 class="card-title">Output Format</h5>
+                                
+                                <div class="mb-3">
+                                    <label class="form-label">Format</label>
+                                    <select class="form-select" name="format_type" id="formatType" required>
+                                        <option value="csv">CSV</option>
+                                        <option value="excel">Excel</option>
+                                        <option value="json">JSON</option>
+                                    </select>
+                                </div>
+                                
+                                <div id="csvSettings">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label class="form-label">Delimiter</label>
+                                                <select class="form-select" name="delimiter">
+                                                    <option value=",">Comma (,)</option>
+                                                    <option value=";">Semicolon (;)</option>
+                                                    <option value="\t">Tab</option>
+                                                    <option value="|">Pipe (|)</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label class="form-label">Quote Character</label>
+                                                <select class="form-select" name="quotechar">
+                                                    <option value='"'>Double Quote (")</option>
+                                                    <option value="'">Single Quote (')</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div id="excelSettings" style="display: none;">
+                                    <div class="mb-3">
+                                        <label class="form-label">Sheet Name</label>
+                                        <input type="text" class="form-control" name="sheet_name" value="Data">
+                                    </div>
+                                </div>
+                                
+                                <div id="jsonSettings" style="display: none;">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label class="form-label">Indent</label>
+                                                <input type="number" class="form-control" name="indent" value="4" min="0" max="8">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label class="form-label">Orient</label>
+                                                <select class="form-select" name="orient">
+                                                    <option value="records">Records</option>
+                                                    <option value="columns">Columns</option>
+                                                    <option value="index">Index</option>
+                                                    <option value="split">Split</option>
+                                                    <option value="table">Table</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-primary">Create Schedule</button>
+                        </div>
+                    </form>
                 </div>
             </div>
+            
+            <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+            <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+            <script>
+                // Initialize date picker
+                flatpickr("#oneTimeDate", {
+                    minDate: "today",
+                    defaultDate: "today"
+                });
+                
+                // Toggle schedule type settings
+                document.getElementById('scheduleType').addEventListener('change', function() {
+                    const scheduleType = this.value;
+                    
+                    // Hide all schedule type settings
+                    document.getElementById('oneTimeSettings').style.display = 'none';
+                    document.getElementById('weeklySettings').style.display = 'none';
+                    document.getElementById('monthlySettings').style.display = 'none';
+                    
+                    // Show selected schedule type settings
+                    if (scheduleType === 'one-time') {
+                        document.getElementById('oneTimeSettings').style.display = 'block';
+                    } else if (scheduleType === 'weekly') {
+                        document.getElementById('weeklySettings').style.display = 'block';
+                    } else if (scheduleType === 'monthly') {
+                        document.getElementById('monthlySettings').style.display = 'block';
+                    }
+                });
+                
+                // Toggle format settings
+                document.getElementById('formatType').addEventListener('change', function() {
+                    const formatType = this.value;
+                    
+                    // Hide all format settings
+                    document.getElementById('csvSettings').style.display = 'none';
+                    document.getElementById('excelSettings').style.display = 'none';
+                    document.getElementById('jsonSettings').style.display = 'none';
+                    
+                    // Show selected format settings
+                    if (formatType === 'csv') {
+                        document.getElementById('csvSettings').style.display = 'block';
+                    } else if (formatType === 'excel') {
+                        document.getElementById('excelSettings').style.display = 'block';
+                    } else if (formatType === 'json') {
+                        document.getElementById('jsonSettings').style.display = 'block';
+                    }
+                });
+                
+                // Add recipient
+                function addRecipient(type) {
+                    const container = document.getElementById(type === 'recipients' ? 'recipientsContainer' : 'ccContainer');
+                    const div = document.createElement('div');
+                    div.className = 'recipient-row';
+                    div.innerHTML = `
+                        <input type="email" class="form-control" name="${type}" required>
+                        <button type="button" class="btn btn-outline-danger" onclick="removeRecipient(this)">Remove</button>
+                    `;
+                    container.appendChild(div);
+                    
+                    // Enable all remove buttons if we have more than one recipient
+                    if (type === 'recipients' && container.querySelectorAll('.recipient-row').length > 1) {
+                        container.querySelectorAll('button').forEach(button => button.disabled = false);
+                    }
+                }
+                
+                // Remove recipient
+                function removeRecipient(button) {
+                    const row = button.parentNode;
+                    const container = row.parentNode;
+                    container.removeChild(row);
+                    
+                    // If it's the recipients container and only one recipient left, disable its remove button
+                    if (container.id === 'recipientsContainer' && container.querySelectorAll('.recipient-row').length === 1) {
+                        container.querySelector('button').disabled = true;
+                    }
+                }
+            </script>
         </body>
         </html>
-    ''', dataset=dataset, get_dataset_row_count=get_dataset_row_count)
+    ''', dataset=dataset, row_count=row_count, 
+        today=datetime.now().strftime('%Y-%m-%d'),
+        timezones=pytz.all_timezones,
+        user_email=user_email,
+        get_dataset_row_count=get_dataset_row_count)
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8501))
