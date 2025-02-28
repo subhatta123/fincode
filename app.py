@@ -597,6 +597,16 @@ def qa_page():
                     width: 100%;
                     height: 400px;
                     margin-top: 1rem;
+                    border: 1px solid #dee2e6;
+                    border-radius: 0.25rem;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                }
+                .vis-placeholder {
+                    color: #6c757d;
+                    text-align: center;
+                    font-style: italic;
                 }
             </style>
         </head>
@@ -653,7 +663,9 @@ def qa_page():
                                 <div class="card">
                                     <div class="card-body">
                                         <h5 class="card-title">Visualization</h5>
-                                        <div id="visualization"></div>
+                                        <div id="visualization">
+                                            <div class="vis-placeholder">Ask a question to see visualization</div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -662,10 +674,14 @@ def qa_page():
                 </div>
             </div>
             
-            <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+            <script src="https://cdn.plot.ly/plotly-2.20.0.min.js"></script>
             <script>
                 const questionForm = document.getElementById('questionForm');
                 const chatContainer = document.getElementById('chatContainer');
+                const visualizationDiv = document.getElementById('visualization');
+                
+                // Initialize visualization area
+                visualizationDiv.innerHTML = '<div class="vis-placeholder">Ask a question to see visualization</div>';
                 
                 questionForm.addEventListener('submit', async (e) => {
                     e.preventDefault();
@@ -674,10 +690,17 @@ def qa_page():
                     const dataset = formData.get('dataset');
                     const question = formData.get('question');
                     
+                    // Clear previous visualization
+                    visualizationDiv.innerHTML = '<div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div>';
+                    
                     // Add user message to chat
                     addMessage(question, 'user');
                     
                     try {
+                        // Show loading message in assistant chat
+                        const loadingMsgId = 'loading-' + Date.now();
+                        addMessage('Analyzing data...', 'assistant', loadingMsgId);
+                        
                         const response = await fetch('/api/ask-question', {
                             method: 'POST',
                             headers: {
@@ -691,28 +714,48 @@ def qa_page():
                         
                         const data = await response.json();
                         
+                        // Remove loading message
+                        const loadingMsg = document.getElementById(loadingMsgId);
+                        if (loadingMsg) loadingMsg.remove();
+                        
                         if (data.success) {
                             // Add assistant's response to chat
                             addMessage(data.answer, 'assistant');
                             
                             // Update visualization if provided
                             if (data.visualization) {
-                                Plotly.newPlot('visualization', data.visualization);
+                                console.log('Received visualization data:', data.visualization);
+                                try {
+                                    // Clear the visualization div
+                                    visualizationDiv.innerHTML = '';
+                                    
+                                    // Create new Plotly chart
+                                    Plotly.newPlot(visualizationDiv, data.visualization.data, data.visualization.layout);
+                                } catch (visError) {
+                                    console.error('Error displaying visualization:', visError);
+                                    visualizationDiv.innerHTML = '<div class="alert alert-warning">Failed to display visualization: ' + visError.message + '</div>';
+                                }
+                            } else {
+                                visualizationDiv.innerHTML = '<div class="vis-placeholder">No visualization available for this query</div>';
                             }
                         } else {
                             addMessage('Error: ' + data.error, 'assistant');
+                            visualizationDiv.innerHTML = '<div class="alert alert-danger">Error: ' + data.error + '</div>';
                         }
                     } catch (error) {
-                        addMessage('Error: Failed to get response', 'assistant');
+                        console.error('API request error:', error);
+                        addMessage('Error: Failed to get response. Check console for details.', 'assistant');
+                        visualizationDiv.innerHTML = '<div class="alert alert-danger">Request failed: ' + error.message + '</div>';
                     }
                     
                     // Clear question input
                     questionForm.querySelector('input[name="question"]').value = '';
                 });
                 
-                function addMessage(message, type) {
+                function addMessage(message, type, id = null) {
                     const messageDiv = document.createElement('div');
                     messageDiv.className = `chat-message ${type}-message`;
+                    if (id) messageDiv.id = id;
                     messageDiv.textContent = message;
                     chatContainer.appendChild(messageDiv);
                     chatContainer.scrollTop = chatContainer.scrollHeight;
@@ -757,80 +800,56 @@ def ask_question_api():
         # Debug: Log the visualization type and structure
         print(f"Visualization type: {type(visualization)}")
         
-        # Function to recursively convert NumPy types to Python standard types
-        def convert_numpy_types(obj):
-            import numpy as np
-            
-            if isinstance(obj, np.ndarray):
-                return obj.tolist()
-            elif isinstance(obj, np.integer):
-                return int(obj)
-            elif isinstance(obj, np.floating):
-                return float(obj)
-            elif isinstance(obj, np.bool_):
-                return bool(obj)
-            elif isinstance(obj, dict):
-                return {key: convert_numpy_types(value) for key, value in obj.items()}
-            elif isinstance(obj, list) or isinstance(obj, tuple):
-                return [convert_numpy_types(item) for item in obj]
-            else:
-                return obj
+        # Convert visualization to a format the frontend can use
+        vis_data = None
         
-        # Handle JSON serialization
-        vis_dict = None
+        # If we have a Plotly figure, convert it to JSON directly
         if visualization is not None:
             try:
-                # Try different approaches to convert the visualization
-                
-                # 1. First try the to_dict method if it exists
-                if hasattr(visualization, 'to_dict'):
-                    print("Using to_dict() method")
-                    vis_dict = visualization.to_dict()
-                
-                # 2. If that doesn't work, try to manually create a dict if it has .data
-                if vis_dict is None and hasattr(visualization, 'data'):
-                    print("Using .data attribute")
-                    vis_dict = {}
-                    for key, value in visualization.data.items():
-                        vis_dict[key] = value  # Will be converted later
-                
-                # 3. If that doesn't work, try to convert to dict using vars() (if object has __dict__)
-                if vis_dict is None and hasattr(visualization, '__dict__'):
-                    print("Using __dict__ attribute")
-                    vis_dict = vars(visualization)
-                
-                # 4. If it's a Plotly figure, try to extract the data
-                if vis_dict is None and hasattr(visualization, 'data') and hasattr(visualization, 'layout'):
-                    print("Handling as Plotly figure")
-                    vis_dict = {
-                        'data': getattr(visualization, 'data', []),
-                        'layout': getattr(visualization, 'layout', {})
+                # Check if it's a Plotly figure by looking for common attributes
+                if hasattr(visualization, 'data') and hasattr(visualization, 'layout'):
+                    print("Using Plotly figure conversion")
+                    # Create a clean dictionary structure for the frontend
+                    vis_data = {
+                        'data': [
+                            # Convert each trace to a basic dict and handle numpy types
+                            {k: convert_numpy_types(v) for k, v in trace.items() if k not in ['_legend', '_meta']}
+                            for trace in visualization.data
+                        ],
+                        'layout': {
+                            # Include only the essential layout properties
+                            k: convert_numpy_types(v)
+                            for k, v in visualization.layout.items()
+                            if k not in ['_grid_ref', '_meta', '_subplot_refs']
+                        }
                     }
-                
-                # 5. If all else fails, try to convert the entire object directly
-                if vis_dict is None:
-                    print("Using direct conversion")
-                    vis_dict = visualization
-                
-                # Finally, convert any NumPy types in the structure
-                vis_dict = convert_numpy_types(vis_dict)
+                # Try to get JSON representation from to_json if available
+                elif hasattr(visualization, 'to_json'):
+                    print("Using to_json method")
+                    vis_json = visualization.to_json()
+                    vis_data = json.loads(vis_json)
+                # Last resort - use the figure's dict representation if available
+                elif hasattr(visualization, 'to_dict'):
+                    print("Using to_dict method")
+                    vis_dict = visualization.to_dict()
+                    vis_data = convert_numpy_types(vis_dict)
+                else:
+                    print("Visualization format not recognized - sending as None")
+                    vis_data = None
+                    
+                # Verify that visualization data is JSON serializable
+                json.dumps(vis_data)  # This will raise an error if not serializable
                 
             except Exception as e:
-                print(f"Error converting visualization to dict: {str(e)}")
-                # Return a message instead of None so the user knows what happened
-                vis_dict = None
-                # Don't fail silently - send error message to the user
-                return jsonify({
-                    'success': True,
-                    'answer': answer,
-                    'visualization': None,
-                    'visualization_error': f"Could not display visualization: {str(e)}"
-                })
-        
+                print(f"Error converting visualization to JSON: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                vis_data = None
+                
         return jsonify({
             'success': True,
             'answer': answer,
-            'visualization': vis_dict
+            'visualization': vis_data
         })
         
     except Exception as e:
@@ -841,6 +860,25 @@ def ask_question_api():
             'success': False,
             'error': str(e)
         })
+
+# Helper function to convert numpy types to Python standard types
+def convert_numpy_types(obj):
+    import numpy as np
+    
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    elif isinstance(obj, dict):
+        return {key: convert_numpy_types(value) for key, value in obj.items()}
+    elif isinstance(obj, list) or isinstance(obj, tuple):
+        return [convert_numpy_types(item) for item in obj]
+    else:
+        return obj
 
 def get_dataset_preview_html(dataset_name):
     """Get HTML preview of dataset"""
