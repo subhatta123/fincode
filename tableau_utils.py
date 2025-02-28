@@ -218,7 +218,6 @@ def get_workbooks(server: TSC.Server) -> list:
                             'project_name': project_name,
                             'views': views
                         })
-                    
                     except Exception as wb_error:
                         print(f"Error processing workbook: {str(wb_error)}")
                         continue
@@ -385,7 +384,7 @@ def download_and_save_data(server: TSC.Server, view_ids: list, workbook_name: st
         if not all_data:
             print("No data was downloaded from any view")
             return False
-        
+            
         # Combine DataFrames and save
         try:
             print(f"Combining {len(all_data)} DataFrames...")
@@ -473,8 +472,8 @@ def download_and_save_data(server: TSC.Server, view_ids: list, workbook_name: st
                     (table_name, server_url, auth_method, credentials, site_name, workbook_name, view_ids_str, view_names_str, datetime.now().isoformat())
                 )
                 conn.commit()
-            
-                print(f"Successfully saved {len(combined_df)} rows to database table '{table_name}'")
+                
+            print(f"Successfully saved {len(combined_df)} rows to database table '{table_name}'")
             return True
             
         except Exception as save_error:
