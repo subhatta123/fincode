@@ -1,16 +1,15 @@
-from flask import Blueprint, render_template, jsonify
+from flask import Blueprint, render_template, send_from_directory
+import os
 
 main_bp = Blueprint('main', __name__)
 
-@main_bp.route('/')
-def index():
-    """Handle the root URL request"""
-    # If you have an index.html template:
-    # return render_template('index.html')
+@main_bp.route('/', defaults={'path': ''})
+@main_bp.route('/<path:path>')
+def index(path):
+    """Serve the frontend application"""
+    static_folder = '../frontend/build'  # Adjust path to match your frontend build location
     
-    # Or return a simple JSON response:
-    return jsonify({
-        "status": "success",
-        "message": "API server is running",
-        "version": "1.0.0"
-    }) 
+    if path != "" and os.path.exists(os.path.join(static_folder, path)):
+        return send_from_directory(static_folder, path)
+    else:
+        return send_from_directory(static_folder, 'index.html') 
