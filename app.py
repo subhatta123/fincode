@@ -493,7 +493,7 @@ def normal_user_dashboard():
             </script>
         </body>
         </html>
-    ''', datasets=datasets)
+    ''', datasets=datasets, get_dataset_row_count=get_dataset_row_count)
 
 @app.route('/power-user')
 @login_required
@@ -1751,7 +1751,7 @@ def admin_dashboard():
                                     Dataset <strong>${dataset}</strong> has been deleted successfully.
                                     <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                                 `;
-                                document.querySelector('.container-fluid').prepend(alertDiv);
+                                document.querySelector('.container').prepend(alertDiv);
                                 
                                 // Remove dataset row from table
                                 const datasetRows = document.querySelectorAll('#datasetTableBody tr');
@@ -1775,7 +1775,7 @@ def admin_dashboard():
                                     Failed to delete dataset: ${data.error || 'Unknown error'}
                                     <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                                 `;
-                                document.querySelector('.container-fluid').prepend(alertDiv);
+                                document.querySelector('.container').prepend(alertDiv);
                             }
                         })
                         .catch(error => {
@@ -1789,7 +1789,7 @@ def admin_dashboard():
                                 Failed to delete dataset: ${error.message}
                                 <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                             `;
-                            document.querySelector('.container-fluid').prepend(alertDiv);
+                            document.querySelector('.container').prepend(alertDiv);
                         });
                     }
                     
@@ -2101,7 +2101,7 @@ def admin_organizations():
                 </script>
             </body>
             </html>
-        ''', organizations=organizations)
+        ''', organizations=organizations, get_dataset_row_count=get_dataset_row_count)
     except Exception as e:
         print(f"Error in admin_organizations function: {str(e)}")
         print(f"Exception type: {type(e).__name__}")
@@ -2266,7 +2266,7 @@ def admin_system():
                 </script>
             </body>
             </html>
-        ''', os=os, sys=sys, flask=flask, time=time, datetime=datetime)
+        ''', os=os, sys=sys, flask=flask, time=time, datetime=datetime, get_dataset_row_count=get_dataset_row_count)
     except Exception as e:
         print(f"Error in admin_system function: {str(e)}")
         print(f"Exception type: {type(e).__name__}")
@@ -2477,7 +2477,7 @@ def tableau_connect():
             </script>
         </body>
         </html>
-    ''')
+    ''', get_dataset_row_count=get_dataset_row_count)
 
 @app.route('/process-tableau-connection', methods=['POST'], endpoint='process_tableau_connection')
 @login_required
@@ -2810,7 +2810,7 @@ def select_tableau_workbook():
             </script>
         </body>
         </html>
-    ''', workbooks=workbooks)
+    ''', workbooks=workbooks, get_dataset_row_count=get_dataset_row_count)
 
 @app.route('/process-workbook-selection', methods=['POST'], endpoint='process_workbook_selection')
 @login_required
@@ -2926,7 +2926,7 @@ def schedule_reports():
             </div>
         </body>
         </html>
-    ''')
+    ''', get_dataset_row_count=get_dataset_row_count)
 
 @app.route('/manage-schedules', endpoint='manage_schedules')
 @login_required
@@ -2958,7 +2958,7 @@ def manage_schedules():
             </div>
         </body>
         </html>
-    ''')
+    ''', get_dataset_row_count=get_dataset_row_count)
 
 @app.route('/schedule-dataset/<dataset>', endpoint='schedule_dataset')
 @login_required
@@ -2990,7 +2990,7 @@ def schedule_dataset(dataset):
             </div>
         </body>
         </html>
-    ''', dataset=dataset)
+    ''', dataset=dataset, get_dataset_row_count=get_dataset_row_count)
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8501))
