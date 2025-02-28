@@ -2589,6 +2589,10 @@ def select_tableau_workbook():
                     border-color: #0d6efd;
                     background-color: rgba(13, 110, 253, 0.1);
                 }
+                .form-check, .btn {
+                    position: relative;
+                    z-index: 10;
+                }
             </style>
         </head>
         <body>
@@ -2616,13 +2620,13 @@ def select_tableau_workbook():
                                     <div class="row">
                                         {% for workbook in workbooks %}
                                             <div class="col-md-6 mb-3">
-                                                <div class="card workbook-card h-100" onclick="selectWorkbook('{{ workbook.id }}')">
+                                                <div class="card workbook-card h-100" data-workbook-id="{{ workbook.id }}">
                                                     <div class="card-body">
                                                         <h5 class="card-title">{{ workbook.name }}</h5>
                                                         <p class="card-text text-muted">Project: {{ workbook.project_name }}</p>
                                                         
                                                         {% if workbook.views %}
-                                                            <div class="form-check form-switch mb-2">
+                                                            <div class="form-check form-switch mb-2" onclick="event.stopPropagation();">
                                                                 <input class="form-check-input workbook-selector" 
                                                                        type="checkbox" 
                                                                        id="workbook-{{ workbook.id }}" 
@@ -2639,17 +2643,17 @@ def select_tableau_workbook():
                                                                 <h6>Available Views:</h6>
                                                                 <div class="mb-2">
                                                                     <button type="button" class="btn btn-sm btn-outline-secondary mb-2"
-                                                                            onclick="selectAllViews('{{ workbook.id }}')">
+                                                                            onclick="selectAllViews('{{ workbook.id }}', event)">
                                                                         Select All
                                                                     </button>
                                                                     <button type="button" class="btn btn-sm btn-outline-secondary mb-2"
-                                                                            onclick="deselectAllViews('{{ workbook.id }}')">
+                                                                            onclick="deselectAllViews('{{ workbook.id }}', event)">
                                                                         Deselect All
                                                                     </button>
                                                                 </div>
                                                                 
                                                                 {% for view in workbook.views %}
-                                                                    <div class="form-check">
+                                                                    <div class="form-check" onclick="event.stopPropagation();">
                                                                         <input class="form-check-input view-selector-{{ workbook.id }}" 
                                                                                type="checkbox" 
                                                                                id="view-{{ view.id }}" 
@@ -2700,13 +2704,34 @@ def select_tableau_workbook():
             
             <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
             <script>
-                // Select workbook and show views
-                function selectWorkbook(workbookId) {
+                // Initialize the page
+                document.addEventListener('DOMContentLoaded', function() {
+                    // Add click listeners to all workbook cards
+                    document.querySelectorAll('.workbook-card').forEach(card => {
+                        card.addEventListener('click', function() {
+                            const workbookId = this.dataset.workbookId;
+                            toggleWorkbookSelection(workbookId);
+                        });
+                    });
+                    
+                    // Add change listeners to all workbook checkboxes
+                    document.querySelectorAll('.workbook-selector').forEach(checkbox => {
+                        checkbox.addEventListener('change', function() {
+                            const workbookId = this.value;
+                            updateViewsVisibility(workbookId);
+                            updateDatasetName();
+                        });
+                    });
+                });
+                
+                // Toggle workbook selection when card is clicked
+                function toggleWorkbookSelection(workbookId) {
                     const checkbox = document.getElementById('workbook-' + workbookId);
                     checkbox.checked = !checkbox.checked;
                     
-                    updateViewsVisibility(workbookId);
-                    updateDatasetName();
+                    // Trigger the change event manually
+                    const event = new Event('change');
+                    checkbox.dispatchEvent(event);
                 }
                 
                 // Show/hide views based on workbook selection
@@ -2729,14 +2754,20 @@ def select_tableau_workbook():
                 }
                 
                 // Select all views for a workbook
-                function selectAllViews(workbookId) {
+                function selectAllViews(workbookId, event) {
+                    if (event) {
+                        event.stopPropagation();
+                    }
                     document.querySelectorAll('.view-selector-' + workbookId).forEach(view => {
                         view.checked = true;
                     });
                 }
                 
                 // Deselect all views for a workbook
-                function deselectAllViews(workbookId) {
+                function deselectAllViews(workbookId, event) {
+                    if (event) {
+                        event.stopPropagation();
+                    }
                     document.querySelectorAll('.view-selector-' + workbookId).forEach(view => {
                         view.checked = false;
                     });
@@ -2755,15 +2786,6 @@ def select_tableau_workbook():
                         document.getElementById('datasetName').value = '';
                     }
                 }
-                
-                // Add event listeners to all workbook checkboxes
-                document.querySelectorAll('.workbook-selector').forEach(checkbox => {
-                    checkbox.addEventListener('change', function() {
-                        const workbookId = this.value;
-                        updateViewsVisibility(workbookId);
-                        updateDatasetName();
-                    });
-                });
                 
                 // Show loading indicator on form submit
                 document.getElementById('workbookForm').addEventListener('submit', function(e) {

@@ -408,20 +408,69 @@ def download_and_save_data(server: TSC.Server, view_ids: list, workbook_name: st
                     cursor.execute("""
                         CREATE TABLE _internal_tableau_connections (
                             dataset_name TEXT PRIMARY KEY,
-                            updated_at TEXT,
-                            server_url TEXT NOT NULL
+                            server_url TEXT NOT NULL,
+                            auth_method TEXT NOT NULL,
+                            credentials TEXT NOT NULL,
+                            site_name TEXT,
+                            workbook_name TEXT NOT NULL,
+                            view_ids TEXT NOT NULL,
+                            view_names TEXT NOT NULL,
+                            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
                         )
                     """)
                 
                 # Save data
                 combined_df.to_sql(table_name, conn, if_exists='replace', index=False)
                 
-                # Update tracking table - now including server_url column
+                # Get connection info from server object
                 server_url = server.server_address if hasattr(server, 'server_address') else ''
-                print(f"Using server_url: {server_url}")
+                
+                # Get auth method and site name from session if available
+                auth_method = 'unknown'
+                credentials = '{}'
+                site_name = ''
+                
+                # Try to get from server object first
+                if hasattr(server, 'auth') and hasattr(server.auth, 'method_name'):
+                    auth_method = server.auth.method_name
+                
+                # Try to get from environment
+                import os
+                if 'TABLEAU_AUTH_METHOD' in os.environ:
+                    auth_method = os.environ['TABLEAU_AUTH_METHOD']
+                
+                # Get from Flask session if available
+                try:
+                    from flask import session
+                    if 'tableau_server' in session:
+                        auth_method = session['tableau_server'].get('auth_method', auth_method)
+                        site_name = session['tableau_server'].get('site_name', '')
+                        # Store credentials as JSON string, but remove sensitive data
+                        import json
+                        credentials_dict = session['tableau_server'].get('credentials', {}).copy()
+                        if 'password' in credentials_dict:
+                            credentials_dict['password'] = '********'
+                        if 'token' in credentials_dict:
+                            credentials_dict['token'] = '********'
+                        credentials = json.dumps(credentials_dict)
+                except (ImportError, RuntimeError):
+                    # Flask not available or not in request context
+                    print("Could not access Flask session, using default values")
+                    
+                # Prepare values to insert
+                view_ids_str = json.dumps(view_ids)
+                view_names_str = json.dumps(view_names)
+                
+                # Update tracking table with all required fields
+                print(f"Updating _internal_tableau_connections with: server_url={server_url}, auth_method={auth_method}, site_name={site_name}")
                 cursor.execute(
-                    "INSERT OR REPLACE INTO _internal_tableau_connections (dataset_name, updated_at, server_url) VALUES (?, ?, ?)",
-                    (table_name, datetime.now().isoformat(), server_url)
+                    """
+                    INSERT OR REPLACE INTO _internal_tableau_connections 
+                    (dataset_name, server_url, auth_method, credentials, site_name, workbook_name, view_ids, view_names, updated_at) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (table_name, server_url, auth_method, credentials, site_name, workbook_name, view_ids_str, view_names_str, datetime.now().isoformat())
                 )
                 conn.commit()
                 
