@@ -1,4 +1,9 @@
-@app.route('/api/schedule/create', methods=['POST'])
+from flask import Blueprint, request, jsonify
+
+# Create a blueprint
+scheduler_bp = Blueprint('scheduler', __name__)
+
+@scheduler_bp.route('/api/schedule/create', methods=['POST'])
 def create_schedule():
     data = request.json
     
