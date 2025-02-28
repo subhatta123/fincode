@@ -255,6 +255,17 @@ def normal_user_dashboard():
                     font-weight: bold;
                     background-color: rgba(0, 123, 255, 0.1);
                 }
+                .card-actions {
+                    display: flex;
+                    justify-content: space-between;
+                    margin-top: 15px;
+                }
+                .delete-btn {
+                    color: #dc3545;
+                }
+                .delete-btn:hover {
+                    color: #bd2130;
+                }
             </style>
         </head>
         <body>
@@ -318,10 +329,19 @@ def normal_user_dashboard():
                                             <h6 class="card-subtitle mb-2 text-muted">
                                                 <small>{{ get_dataset_row_count(dataset) }} rows</small>
                                             </h6>
-                                            <a href="#" class="card-link" 
-                                               onclick="viewDatasetPreview('{{ dataset }}')">View Preview</a>
-                                            <a href="{{ url_for('schedule_dataset', dataset=dataset) }}" 
-                                               class="card-link">Create Schedule</a>
+                                            <div class="card-actions">
+                                                <div>
+                                                    <a href="#" class="card-link" 
+                                                      onclick="viewDatasetPreview('{{ dataset }}')">View Preview</a>
+                                                    <a href="{{ url_for('schedule_dataset', dataset=dataset) }}" 
+                                                      class="card-link">Create Schedule</a>
+                                                </div>
+                                                <div>
+                                                    <a href="#" class="delete-btn" onclick="confirmDelete('{{ dataset }}')">
+                                                        <i class="bi bi-trash"></i>
+                                                    </a>
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -350,6 +370,26 @@ def normal_user_dashboard():
                             </div>
                         </div>
                     </div>
+                    
+                    <!-- Delete Confirmation Modal -->
+                    <div class="modal fade" id="deleteConfirmModal" tabindex="-1">
+                        <div class="modal-dialog">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <h5 class="modal-title">Confirm Delete</h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <p>Are you sure you want to delete the dataset: <strong id="deleteDatasetName"></strong>?</p>
+                                    <p class="text-danger">This action cannot be undone.</p>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                    <button type="button" class="btn btn-danger" id="confirmDeleteBtn">Delete Dataset</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </main>
             
@@ -373,6 +413,82 @@ def normal_user_dashboard():
                         .catch(error => {
                             previewDiv.innerHTML = `<div class="alert alert-danger">Failed to load preview: ${error}</div>`;
                         });
+                }
+                
+                function confirmDelete(dataset) {
+                    // Set the dataset name in the modal
+                    document.getElementById('deleteDatasetName').textContent = dataset;
+                    
+                    // Show confirmation modal
+                    const modal = new bootstrap.Modal(document.getElementById('deleteConfirmModal'));
+                    modal.show();
+                    
+                    // Setup confirm button action
+                    const confirmBtn = document.getElementById('confirmDeleteBtn');
+                    
+                    // Remove any existing event listeners
+                    const newConfirmBtn = confirmBtn.cloneNode(true);
+                    confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+                    
+                    // Add new event listener
+                    newConfirmBtn.addEventListener('click', function() {
+                        deleteDataset(dataset, modal);
+                    });
+                }
+                
+                function deleteDataset(dataset, modal) {
+                    // Show loading state
+                    const confirmBtn = document.getElementById('confirmDeleteBtn');
+                    confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Deleting...';
+                    confirmBtn.disabled = true;
+                    
+                    // Delete the dataset
+                    fetch(`/api/datasets/${dataset}`, {
+                        method: 'DELETE'
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        // Hide modal
+                        modal.hide();
+                        
+                        if (data.success) {
+                            // Show success message
+                            const alertDiv = document.createElement('div');
+                            alertDiv.className = 'alert alert-success alert-dismissible fade show';
+                            alertDiv.innerHTML = `
+                                Dataset <strong>${dataset}</strong> has been deleted successfully.
+                                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                            `;
+                            document.querySelector('.container').prepend(alertDiv);
+                            
+                            // Remove dataset card from page
+                            setTimeout(() => {
+                                window.location.reload();
+                            }, 1000);
+                        } else {
+                            // Show error message
+                            const alertDiv = document.createElement('div');
+                            alertDiv.className = 'alert alert-danger alert-dismissible fade show';
+                            alertDiv.innerHTML = `
+                                Failed to delete dataset: ${data.error || 'Unknown error'}
+                                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                            `;
+                            document.querySelector('.container').prepend(alertDiv);
+                        }
+                    })
+                    .catch(error => {
+                        // Hide modal
+                        modal.hide();
+                        
+                        // Show error message
+                        const alertDiv = document.createElement('div');
+                        alertDiv.className = 'alert alert-danger alert-dismissible fade show';
+                        alertDiv.innerHTML = `
+                            Failed to delete dataset: ${error.message}
+                            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                        `;
+                        document.querySelector('.container').prepend(alertDiv);
+                    });
                 }
             </script>
         </body>
@@ -417,6 +533,17 @@ def power_user_dashboard():
                 .nav-link.active {
                     font-weight: bold;
                     background-color: rgba(0, 123, 255, 0.1);
+                }
+                .card-actions {
+                    display: flex;
+                    justify-content: space-between;
+                    margin-top: 15px;
+                }
+                .delete-btn {
+                    color: #dc3545;
+                }
+                .delete-btn:hover {
+                    color: #bd2130;
                 }
             </style>
         </head>
@@ -486,19 +613,26 @@ def power_user_dashboard():
                                             <h6 class="card-subtitle mb-2 text-muted">
                                                 <small>{{ get_dataset_row_count(dataset) }} rows</small>
                                             </h6>
-                                            <div class="btn-group">
-                                                <a href="#" class="btn btn-sm btn-outline-primary" 
-                                                onclick="viewDatasetPreview('{{ dataset }}')">
-                                                    <i class="bi bi-table"></i> View Preview
-                                                </a>
-                                                <a href="{{ url_for('qa_page') }}?dataset={{ dataset }}" 
-                                                class="btn btn-sm btn-outline-success">
-                                                    <i class="bi bi-question-circle"></i> Ask Questions
-                                                </a>
-                                                <a href="{{ url_for('schedule_dataset', dataset=dataset) }}" 
-                                                class="btn btn-sm btn-outline-info">
-                                                    <i class="bi bi-calendar-plus"></i> Schedule
-                                                </a>
+                                            <div class="card-actions">
+                                                <div class="btn-group">
+                                                    <a href="#" class="btn btn-sm btn-outline-primary" 
+                                                    onclick="viewDatasetPreview('{{ dataset }}')">
+                                                        <i class="bi bi-table"></i> View Preview
+                                                    </a>
+                                                    <a href="{{ url_for('qa_page') }}?dataset={{ dataset }}" 
+                                                    class="btn btn-sm btn-outline-success">
+                                                        <i class="bi bi-question-circle"></i> Ask Questions
+                                                    </a>
+                                                    <a href="{{ url_for('schedule_dataset', dataset=dataset) }}" 
+                                                    class="btn btn-sm btn-outline-info">
+                                                        <i class="bi bi-calendar-plus"></i> Schedule
+                                                    </a>
+                                                </div>
+                                                <div>
+                                                    <a href="#" class="delete-btn" onclick="confirmDelete('{{ dataset }}')">
+                                                        <i class="bi bi-trash"></i>
+                                                    </a>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -528,6 +662,26 @@ def power_user_dashboard():
                             </div>
                         </div>
                     </div>
+                    
+                    <!-- Delete Confirmation Modal -->
+                    <div class="modal fade" id="deleteConfirmModal" tabindex="-1">
+                        <div class="modal-dialog">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <h5 class="modal-title">Confirm Delete</h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <p>Are you sure you want to delete the dataset: <strong id="deleteDatasetName"></strong>?</p>
+                                    <p class="text-danger">This action cannot be undone.</p>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                    <button type="button" class="btn btn-danger" id="confirmDeleteBtn">Delete Dataset</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </main>
             
@@ -551,6 +705,82 @@ def power_user_dashboard():
                         .catch(error => {
                             previewDiv.innerHTML = `<div class="alert alert-danger">Failed to load preview: ${error}</div>`;
                         });
+                }
+                
+                function confirmDelete(dataset) {
+                    // Set the dataset name in the modal
+                    document.getElementById('deleteDatasetName').textContent = dataset;
+                    
+                    // Show confirmation modal
+                    const modal = new bootstrap.Modal(document.getElementById('deleteConfirmModal'));
+                    modal.show();
+                    
+                    // Setup confirm button action
+                    const confirmBtn = document.getElementById('confirmDeleteBtn');
+                    
+                    // Remove any existing event listeners
+                    const newConfirmBtn = confirmBtn.cloneNode(true);
+                    confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+                    
+                    // Add new event listener
+                    newConfirmBtn.addEventListener('click', function() {
+                        deleteDataset(dataset, modal);
+                    });
+                }
+                
+                function deleteDataset(dataset, modal) {
+                    // Show loading state
+                    const confirmBtn = document.getElementById('confirmDeleteBtn');
+                    confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Deleting...';
+                    confirmBtn.disabled = true;
+                    
+                    // Delete the dataset
+                    fetch(`/api/datasets/${dataset}`, {
+                        method: 'DELETE'
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        // Hide modal
+                        modal.hide();
+                        
+                        if (data.success) {
+                            // Show success message
+                            const alertDiv = document.createElement('div');
+                            alertDiv.className = 'alert alert-success alert-dismissible fade show';
+                            alertDiv.innerHTML = `
+                                Dataset <strong>${dataset}</strong> has been deleted successfully.
+                                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                            `;
+                            document.querySelector('.container').prepend(alertDiv);
+                            
+                            // Remove dataset card from page
+                            setTimeout(() => {
+                                window.location.reload();
+                            }, 1000);
+                        } else {
+                            // Show error message
+                            const alertDiv = document.createElement('div');
+                            alertDiv.className = 'alert alert-danger alert-dismissible fade show';
+                            alertDiv.innerHTML = `
+                                Failed to delete dataset: ${data.error || 'Unknown error'}
+                                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                            `;
+                            document.querySelector('.container').prepend(alertDiv);
+                        }
+                    })
+                    .catch(error => {
+                        // Hide modal
+                        modal.hide();
+                        
+                        // Show error message
+                        const alertDiv = document.createElement('div');
+                        alertDiv.className = 'alert alert-danger alert-dismissible fade show';
+                        alertDiv.innerHTML = `
+                            Failed to delete dataset: ${error.message}
+                            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                        `;
+                        document.querySelector('.container').prepend(alertDiv);
+                    });
                 }
             </script>
         </body>
@@ -983,6 +1213,9 @@ def admin_dashboard():
                     'id': row[0],
                     'name': row[1]
                 })
+        
+        # Get datasets
+        datasets = get_saved_datasets()
                 
         return render_template_string('''
             <!DOCTYPE html>
@@ -990,6 +1223,7 @@ def admin_dashboard():
             <head>
                 <title>Admin Dashboard - Tableau Data Reporter</title>
                 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+                <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css" rel="stylesheet">
                 <style>
                     .sidebar {
                         position: fixed;
@@ -1003,6 +1237,16 @@ def admin_dashboard():
                     .main {
                         margin-left: 240px;
                         padding: 20px;
+                    }
+                    .nav-tabs .nav-link.active {
+                        font-weight: bold;
+                    }
+                    .delete-btn {
+                        color: #dc3545;
+                        cursor: pointer;
+                    }
+                    .delete-btn:hover {
+                        color: #bd2130;
                     }
                 </style>
             </head>
@@ -1020,177 +1264,296 @@ def admin_dashboard():
                             <a href="{{ url_for('admin_organizations') }}" class="btn btn-primary w-100 mb-2">🏢 Organizations</a>
                             <a href="{{ url_for('admin_system') }}" class="btn btn-primary w-100 mb-2">⚙️ System</a>
                             <hr>
+                            <a href="{{ url_for('tableau_connect') }}" class="btn btn-outline-primary w-100 mb-2">
+                                <i class="bi bi-box-arrow-in-right"></i> Connect to Tableau
+                            </a>
                             <a href="{{ url_for('logout') }}" class="btn btn-secondary w-100">🚪 Logout</a>
                         </div>
                     </div>
                 </nav>
                 
                 <main class="main">
-                    <h1>👥 User Management</h1>
-                    
-                    <div class="card mb-4">
-                        <div class="card-body">
-                            <h5>Add New User</h5>
-                            <form id="addUserForm" onsubmit="return addUser(event)">
-                                <div class="row">
-                                    <div class="col-md-4">
-                                        <div class="mb-3">
-                                            <label class="form-label">Username</label>
-                                            <input type="text" class="form-control" name="username" required>
-                                        </div>
+                    <div class="container-fluid">
+                        {% with messages = get_flashed_messages() %}
+                            {% if messages %}
+                                {% for message in messages %}
+                                    <div class="alert alert-info">{{ message }}</div>
+                                {% endfor %}
+                            {% endif %}
+                        {% endwith %}
+                        
+                        <ul class="nav nav-tabs mb-4">
+                            <li class="nav-item">
+                                <a class="nav-link active" id="users-tab" data-bs-toggle="tab" href="#users">👥 Users</a>
+                            </li>
+                            <li class="nav-item">
+                                <a class="nav-link" id="datasets-tab" data-bs-toggle="tab" href="#datasets">📊 Datasets</a>
+                            </li>
+                        </ul>
+                        
+                        <div class="tab-content">
+                            <!-- Users Tab -->
+                            <div class="tab-pane fade show active" id="users">
+                                <h1>👥 User Management</h1>
+                                
+                                <div class="card mb-4">
+                                    <div class="card-body">
+                                        <h5>Add New User</h5>
+                                        <form id="addUserForm" onsubmit="return addUser(event)">
+                                            <div class="row">
+                                                <div class="col-md-4">
+                                                    <div class="mb-3">
+                                                        <label class="form-label">Username</label>
+                                                        <input type="text" class="form-control" name="username" required>
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-4">
+                                                    <div class="mb-3">
+                                                        <label class="form-label">Email</label>
+                                                        <input type="email" class="form-control" name="email" required>
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-4">
+                                                    <div class="mb-3">
+                                                        <label class="form-label">Password</label>
+                                                        <input type="password" class="form-control" name="password" required>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="row">
+                                                <div class="col-md-4">
+                                                    <div class="mb-3">
+                                                        <label class="form-label">Permission Type</label>
+                                                        <select class="form-select" name="permission_type" required>
+                                                            <option value="normal">Normal</option>
+                                                            <option value="power">Power</option>
+                                                            <option value="superadmin">Superadmin</option>
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-4">
+                                                    <div class="mb-3">
+                                                        <label class="form-label">Organization</label>
+                                                        <select class="form-select" name="organization_id">
+                                                            <option value="">No Organization</option>
+                                                            {% for org in organizations %}
+                                                                <option value="{{ org.id }}">{{ org.name }}</option>
+                                                            {% endfor %}
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-4">
+                                                    <div class="mb-3">
+                                                        <label class="form-label">&nbsp;</label>
+                                                        <button type="submit" class="btn btn-primary w-100">Create User</button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </form>
                                     </div>
-                                    <div class="col-md-4">
-                                        <div class="mb-3">
-                                            <label class="form-label">Email</label>
-                                            <input type="email" class="form-control" name="email" required>
+                                </div>
+                                
+                                <div class="card">
+                                    <div class="card-body">
+                                        <div class="d-flex justify-content-between align-items-center mb-3">
+                                            <h5 class="mb-0">Existing Users</h5>
+                                            <div class="d-flex gap-2">
+                                                <input type="text" class="form-control" id="searchUser" 
+                                                    placeholder="Search users..." onkeyup="filterUsers()">
+                                                <select class="form-select" id="filterPermission" onchange="filterUsers()">
+                                                    <option value="">All Permissions</option>
+                                                    <option value="normal">Normal</option>
+                                                    <option value="power">Power</option>
+                                                    <option value="superadmin">Superadmin</option>
+                                                </select>
+                                            </div>
                                         </div>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <div class="mb-3">
-                                            <label class="form-label">Password</label>
-                                            <input type="password" class="form-control" name="password" required>
+                                        
+                                        <div class="table-responsive">
+                                            <table class="table table-hover">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Username</th>
+                                                        <th>Email</th>
+                                                        <th>Role</th>
+                                                        <th>Organization</th>
+                                                        <th>Actions</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody id="userTableBody">
+                                                    {% for user in users %}
+                                                        <tr>
+                                                            <td>{{ user.username }}</td>
+                                                            <td>{{ user.email }}</td>
+                                                            <td>{{ user.role }}</td>
+                                                            <td>{{ user.organization_name or 'None' }}</td>
+                                                            <td>
+                                                                <div class="btn-group btn-group-sm">
+                                                                    <button class="btn btn-outline-primary"
+                                                                            onclick="editUser('{{ user.id }}')">
+                                                                        ✏️ Edit
+                                                                    </button>
+                                                                    <button class="btn btn-outline-danger"
+                                                                            onclick="deleteUser('{{ user.id }}')">
+                                                                        🗑️ Delete
+                                                                    </button>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    {% endfor %}
+                                                </tbody>
+                                            </table>
                                         </div>
                                     </div>
                                 </div>
-                                <div class="row">
-                                    <div class="col-md-4">
+                            </div>
+                            
+                            <!-- Datasets Tab -->
+                            <div class="tab-pane fade" id="datasets">
+                                <h1>📊 Dataset Management</h1>
+                                
+                                <div class="card mb-4">
+                                    <div class="card-body">
+                                        <h5>Datasets</h5>
+                                        <p>Manage your application's datasets. You can preview and delete datasets from this page.</p>
+                                        <a href="{{ url_for('tableau_connect') }}" class="btn btn-primary">
+                                            <i class="bi bi-plus-circle"></i> Add New Dataset
+                                        </a>
+                                    </div>
+                                </div>
+                                
+                                <div class="card">
+                                    <div class="card-body">
+                                        <div class="d-flex justify-content-between align-items-center mb-3">
+                                            <h5 class="mb-0">Existing Datasets</h5>
+                                            <input type="text" class="form-control w-25" id="searchDataset" 
+                                                   placeholder="Search datasets..." onkeyup="filterDatasets()">
+                                        </div>
+                                        
+                                        <div class="table-responsive">
+                                            <table class="table table-hover">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Dataset Name</th>
+                                                        <th>Rows</th>
+                                                        <th>Actions</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody id="datasetTableBody">
+                                                    {% for dataset in datasets %}
+                                                        <tr>
+                                                            <td>{{ dataset }}</td>
+                                                            <td>{{ get_dataset_row_count(dataset) }}</td>
+                                                            <td>
+                                                                <div class="btn-group btn-group-sm">
+                                                                    <button class="btn btn-outline-primary"
+                                                                            onclick="viewDatasetPreview('{{ dataset }}')">
+                                                                        <i class="bi bi-table"></i> Preview
+                                                                    </button>
+                                                                    <button class="btn btn-outline-danger"
+                                                                            onclick="confirmDelete('{{ dataset }}')">
+                                                                        <i class="bi bi-trash"></i> Delete
+                                                                    </button>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    {% endfor %}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Edit User Modal -->
+                    <div class="modal fade" id="editUserModal" tabindex="-1" aria-hidden="true">
+                        <div class="modal-dialog">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <h5 class="modal-title">Edit User</h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <form id="editUserForm">
+                                        <input type="hidden" id="edit-user-id" name="id">
+                                        <div class="mb-3">
+                                            <label class="form-label">Username</label>
+                                            <input type="text" class="form-control" id="edit-username" name="username" required>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label class="form-label">Email</label>
+                                            <input type="email" class="form-control" id="edit-email" name="email" required>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label class="form-label">Password</label>
+                                            <input type="password" class="form-control" id="edit-password" name="password" 
+                                                placeholder="Leave blank to keep current password">
+                                            <div class="form-text">Leave blank to keep the current password</div>
+                                        </div>
                                         <div class="mb-3">
                                             <label class="form-label">Permission Type</label>
-                                            <select class="form-select" name="permission_type" required>
+                                            <select class="form-select" id="edit-permission-type" name="permission_type" required>
                                                 <option value="normal">Normal</option>
                                                 <option value="power">Power</option>
                                                 <option value="superadmin">Superadmin</option>
                                             </select>
                                         </div>
-                                    </div>
-                                    <div class="col-md-4">
                                         <div class="mb-3">
                                             <label class="form-label">Organization</label>
-                                            <select class="form-select" name="organization_id">
+                                            <select class="form-select" id="edit-organization-id" name="organization_id">
                                                 <option value="">No Organization</option>
                                                 {% for org in organizations %}
                                                     <option value="{{ org.id }}">{{ org.name }}</option>
                                                 {% endfor %}
                                             </select>
                                         </div>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <div class="mb-3">
-                                            <label class="form-label">&nbsp;</label>
-                                            <button type="submit" class="btn btn-primary w-100">Create User</button>
-                                        </div>
-                                    </div>
+                                    </form>
                                 </div>
-                            </form>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                    <button type="button" class="btn btn-primary" onclick="updateUser()">Save Changes</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     
-                    <div class="card">
-                        <div class="card-body">
-                            <div class="d-flex justify-content-between align-items-center mb-3">
-                                <h5 class="mb-0">Existing Users</h5>
-                                <div class="d-flex gap-2">
-                                    <input type="text" class="form-control" id="searchUser" 
-                                        placeholder="Search users..." onkeyup="filterUsers()">
-                                    <select class="form-select" id="filterPermission" onchange="filterUsers()">
-                                        <option value="">All Permissions</option>
-                                        <option value="normal">Normal</option>
-                                        <option value="power">Power</option>
-                                        <option value="superadmin">Superadmin</option>
-                                    </select>
+                    <!-- Dataset Preview Modal -->
+                    <div class="modal fade" id="datasetPreviewModal" tabindex="-1">
+                        <div class="modal-dialog modal-xl">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <h5 class="modal-title">Dataset Preview: <span id="datasetName"></span></h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <div id="datasetPreview"></div>
                                 </div>
                             </div>
-                            
-                            <div class="table-responsive">
-                                <table class="table table-hover">
-                                    <thead>
-                                        <tr>
-                                            <th>Username</th>
-                                            <th>Email</th>
-                                            <th>Role</th>
-                                            <th>Organization</th>
-                                            <th>Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="userTableBody">
-                                        {% for user in users %}
-                                            <tr>
-                                                <td>{{ user.username }}</td>
-                                                <td>{{ user.email }}</td>
-                                                <td>{{ user.role }}</td>
-                                                <td>{{ user.organization_name or 'None' }}</td>
-                                                <td>
-                                                    <div class="btn-group btn-group-sm">
-                                                        <button class="btn btn-outline-primary"
-                                                                onclick="editUser('{{ user.id }}')">
-                                                            ✏️ Edit
-                                                        </button>
-                                                        <button class="btn btn-outline-danger"
-                                                                onclick="deleteUser('{{ user.id }}')">
-                                                            🗑️ Delete
-                                                        </button>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        {% endfor %}
-                                    </tbody>
-                                </table>
+                        </div>
+                    </div>
+                    
+                    <!-- Delete Confirmation Modal -->
+                    <div class="modal fade" id="deleteConfirmModal" tabindex="-1">
+                        <div class="modal-dialog">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <h5 class="modal-title">Confirm Delete</h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <p>Are you sure you want to delete the dataset: <strong id="deleteDatasetName"></strong>?</p>
+                                    <p class="text-danger">This action cannot be undone.</p>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                    <button type="button" class="btn btn-danger" id="confirmDeleteBtn">Delete Dataset</button>
+                                </div>
                             </div>
                         </div>
                     </div>
                 </main>
-                
-                <!-- Edit User Modal -->
-                <div class="modal fade" id="editUserModal" tabindex="-1" aria-hidden="true">
-                    <div class="modal-dialog">
-                        <div class="modal-content">
-                            <div class="modal-header">
-                                <h5 class="modal-title">Edit User</h5>
-                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                            </div>
-                            <div class="modal-body">
-                                <form id="editUserForm">
-                                    <input type="hidden" id="edit-user-id" name="id">
-                                    <div class="mb-3">
-                                        <label class="form-label">Username</label>
-                                        <input type="text" class="form-control" id="edit-username" name="username" required>
-                                    </div>
-                                    <div class="mb-3">
-                                        <label class="form-label">Email</label>
-                                        <input type="email" class="form-control" id="edit-email" name="email" required>
-                                    </div>
-                                    <div class="mb-3">
-                                        <label class="form-label">Password</label>
-                                        <input type="password" class="form-control" id="edit-password" name="password" 
-                                            placeholder="Leave blank to keep current password">
-                                        <div class="form-text">Leave blank to keep the current password</div>
-                                    </div>
-                                    <div class="mb-3">
-                                        <label class="form-label">Permission Type</label>
-                                        <select class="form-select" id="edit-permission-type" name="permission_type" required>
-                                            <option value="normal">Normal</option>
-                                            <option value="power">Power</option>
-                                            <option value="superadmin">Superadmin</option>
-                                        </select>
-                                    </div>
-                                    <div class="mb-3">
-                                        <label class="form-label">Organization</label>
-                                        <select class="form-select" id="edit-organization-id" name="organization_id">
-                                            <option value="">No Organization</option>
-                                            {% for org in organizations %}
-                                                <option value="{{ org.id }}">{{ org.name }}</option>
-                                            {% endfor %}
-                                        </select>
-                                    </div>
-                                </form>
-                            </div>
-                            <div class="modal-footer">
-                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                                <button type="button" class="btn btn-primary" onclick="updateUser()">Save Changes</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
                 
                 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
                 <script>
@@ -1323,10 +1686,135 @@ def admin_dashboard():
                             alert('Error updating user: ' + error);
                         });
                     }
+                    
+                    function viewDatasetPreview(dataset) {
+                        document.getElementById('datasetName').textContent = dataset;
+                        const previewDiv = document.getElementById('datasetPreview');
+                        previewDiv.innerHTML = '<div class="text-center"><div class="spinner-border" role="status"></div><p>Loading preview...</p></div>';
+                        
+                        // Show modal
+                        const modal = new bootstrap.Modal(document.getElementById('datasetPreviewModal'));
+                        modal.show();
+                        
+                        // Fetch preview
+                        fetch(`/api/datasets/${dataset}/preview`)
+                            .then(response => response.text())
+                            .then(html => {
+                                previewDiv.innerHTML = html;
+                            })
+                            .catch(error => {
+                                previewDiv.innerHTML = `<div class="alert alert-danger">Failed to load preview: ${error}</div>`;
+                            });
+                    }
+                    
+                    function confirmDelete(dataset) {
+                        // Set the dataset name in the modal
+                        document.getElementById('deleteDatasetName').textContent = dataset;
+                        
+                        // Show confirmation modal
+                        const modal = new bootstrap.Modal(document.getElementById('deleteConfirmModal'));
+                        modal.show();
+                        
+                        // Setup confirm button action
+                        const confirmBtn = document.getElementById('confirmDeleteBtn');
+                        
+                        // Remove any existing event listeners
+                        const newConfirmBtn = confirmBtn.cloneNode(true);
+                        confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+                        
+                        // Add new event listener
+                        newConfirmBtn.addEventListener('click', function() {
+                            deleteDataset(dataset, modal);
+                        });
+                    }
+                    
+                    function deleteDataset(dataset, modal) {
+                        // Show loading state
+                        const confirmBtn = document.getElementById('confirmDeleteBtn');
+                        confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Deleting...';
+                        confirmBtn.disabled = true;
+                        
+                        // Delete the dataset
+                        fetch(`/api/datasets/${dataset}`, {
+                            method: 'DELETE'
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            // Hide modal
+                            modal.hide();
+                            
+                            if (data.success) {
+                                // Show success message
+                                const alertDiv = document.createElement('div');
+                                alertDiv.className = 'alert alert-success alert-dismissible fade show';
+                                alertDiv.innerHTML = `
+                                    Dataset <strong>${dataset}</strong> has been deleted successfully.
+                                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                                `;
+                                document.querySelector('.container-fluid').prepend(alertDiv);
+                                
+                                // Remove dataset row from table
+                                const datasetRows = document.querySelectorAll('#datasetTableBody tr');
+                                datasetRows.forEach(row => {
+                                    if (row.cells[0].textContent === dataset) {
+                                        row.remove();
+                                    }
+                                });
+                                
+                                // If no datasets left, reload page
+                                if (datasetRows.length <= 1) {
+                                    setTimeout(() => {
+                                        location.reload();
+                                    }, 1000);
+                                }
+                            } else {
+                                // Show error message
+                                const alertDiv = document.createElement('div');
+                                alertDiv.className = 'alert alert-danger alert-dismissible fade show';
+                                alertDiv.innerHTML = `
+                                    Failed to delete dataset: ${data.error || 'Unknown error'}
+                                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                                `;
+                                document.querySelector('.container-fluid').prepend(alertDiv);
+                            }
+                        })
+                        .catch(error => {
+                            // Hide modal
+                            modal.hide();
+                            
+                            // Show error message
+                            const alertDiv = document.createElement('div');
+                            alertDiv.className = 'alert alert-danger alert-dismissible fade show';
+                            alertDiv.innerHTML = `
+                                Failed to delete dataset: ${error.message}
+                                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                            `;
+                            document.querySelector('.container-fluid').prepend(alertDiv);
+                        });
+                    }
+                    
+                    function filterDatasets() {
+                        const input = document.getElementById('searchDataset');
+                        const filter = input.value.toUpperCase();
+                        const tbody = document.getElementById('datasetTableBody');
+                        const rows = tbody.getElementsByTagName('tr');
+                        
+                        for (let i = 0; i < rows.length; i++) {
+                            const td = rows[i].getElementsByTagName('td')[0];
+                            if (td) {
+                                const txtValue = td.textContent || td.innerText;
+                                if (txtValue.toUpperCase().indexOf(filter) > -1) {
+                                    rows[i].style.display = '';
+                                } else {
+                                    rows[i].style.display = 'none';
+                                }
+                            }
+                        }
+                    }
                 </script>
             </body>
             </html>
-        ''', users=users, organizations=organizations)
+        ''', users=users, organizations=organizations, datasets=datasets, get_dataset_row_count=get_dataset_row_count)
         
     except Exception as e:
         print(f"Error in admin_dashboard function: {str(e)}")
