@@ -8,7 +8,7 @@ app = Flask(__name__)
 
 # Import and register blueprints
 from app.routes.scheduler import scheduler_bp
-app.register_blueprint(scheduler_bp)
+from app.routes.main import main_bp
 
-# Import routes after creating the app instance to avoid circular imports
-from app.routes import scheduler 
+app.register_blueprint(scheduler_bp)
+app.register_blueprint(main_bp) 
