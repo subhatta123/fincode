@@ -19,7 +19,7 @@ from flask import Flask, request
 
 # Print debug information for troubleshooting
 print("=" * 50)
-print("STANDALONE APP.PY RUNNING")
+print("CLEAN APP.PY RUNNING - NO IMPORTS FROM OTHER MODULES")
 print(f"Python version: {sys.version}")
 print(f"Current directory: {os.getcwd()}")
 print(f"Files in directory: {', '.join(f for f in os.listdir('.') if os.path.isfile(f))}")
