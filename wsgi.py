@@ -14,8 +14,20 @@ logger = logging.getLogger(__name__)
 logger.info(f"Python version: {sys.version}")
 logger.info(f"Current working directory: {os.getcwd()}")
 
-# Import the simplified Flask app
-from flask_app import app
+try:
+    # Import the simplified Flask app
+    from simplified_flask_app import app
+    logger.info("Successfully imported simplified_flask_app")
+except Exception as e:
+    # Fall back to regular flask_app if simplified version fails
+    try:
+        from flask_app import app
+        logger.info("Imported flask_app as fallback")
+    except Exception as e2:
+        logger.error(f"Error importing flask_app: {str(e2)}")
+        # Last resort - import from app.py
+        from app import app
+        logger.info("Imported app.py as last resort")
 
 # Print all registered routes for debugging
 logger.info("===== REGISTERED ROUTES =====")
