@@ -27,6 +27,7 @@ def get_base_url():
 
 def ensure_directories():
     """Create necessary directories if they don't exist."""
+    # Create standard directories
     required_dirs = [
         'data',
         'static',
@@ -41,21 +42,75 @@ def ensure_directories():
             logger.info(f"Creating directory: {dir_path}")
             os.makedirs(dir_path, exist_ok=True)
     
-    # Ensure static/index.html exists
-    static_index_path = os.path.join(os.getcwd(), 'static', 'index.html')
-    if not os.path.exists(static_index_path):
-        logger.info(f"Static index.html not found - creating default index.html")
-        create_default_index_html()
-    else:
-        logger.info(f"Static index.html exists at {static_index_path}")
-
-def create_default_index_html():
-    """Create a default index.html file in the static directory."""
-    static_dir = os.path.join(os.getcwd(), 'static')
-    if not os.path.exists(static_dir):
-        os.makedirs(static_dir, exist_ok=True)
+    # Create frontend build structure that Render expects
+    frontend_build_path = os.path.join(os.getcwd(), 'frontend', 'build')
+    if not os.path.exists(frontend_build_path):
+        logger.info(f"Creating frontend/build directory: {frontend_build_path}")
+        os.makedirs(frontend_build_path, exist_ok=True)
+        
+    # Create subdirectories in frontend/build
+    frontend_dirs = [
+        'reports',
+        'logos'
+    ]
     
-    index_path = os.path.join(static_dir, 'index.html')
+    for directory in frontend_dirs:
+        dir_path = os.path.join(frontend_build_path, directory)
+        if not os.path.exists(dir_path):
+            logger.info(f"Creating directory: {dir_path}")
+            os.makedirs(dir_path, exist_ok=True)
+    
+    # Ensure frontend/build/index.html exists
+    frontend_index_path = os.path.join(frontend_build_path, 'index.html')
+    if not os.path.exists(frontend_index_path):
+        logger.info(f"Creating index.html in frontend/build directory")
+        create_default_index_html(frontend_index_path)
+    else:
+        logger.info(f"Frontend index.html exists at {frontend_index_path}")
+    
+    # Copy essential files from static to frontend/build if needed
+    static_path = os.path.join(os.getcwd(), 'static')
+    if os.path.exists(static_path) and os.path.exists(frontend_build_path):
+        # Copy or sync logos and reports directories
+        logger.info("Ensuring static files are available in frontend/build")
+        sync_directories(
+            os.path.join(static_path, 'logos'), 
+            os.path.join(frontend_build_path, 'logos')
+        )
+        sync_directories(
+            os.path.join(static_path, 'reports'), 
+            os.path.join(frontend_build_path, 'reports')
+        )
+
+def sync_directories(source_dir, target_dir):
+    """Copy all files from source to target directory if they don't exist or are newer."""
+    if not os.path.exists(source_dir):
+        return
+    
+    if not os.path.exists(target_dir):
+        os.makedirs(target_dir, exist_ok=True)
+    
+    for item in os.listdir(source_dir):
+        source_item = os.path.join(source_dir, item)
+        target_item = os.path.join(target_dir, item)
+        
+        # If it's a file, copy it if it doesn't exist in target or is newer
+        if os.path.isfile(source_item):
+            if not os.path.exists(target_item) or os.path.getmtime(source_item) > os.path.getmtime(target_item):
+                shutil.copy2(source_item, target_item)
+                logger.info(f"Copied {source_item} to {target_item}")
+        
+        # If it's a directory, recursively sync
+        elif os.path.isdir(source_item):
+            sync_directories(source_item, target_item)
+
+def create_default_index_html(index_path=None):
+    """Create a default index.html file."""
+    if index_path is None:
+        # Default to frontend/build/index.html
+        frontend_build_path = os.path.join(os.getcwd(), 'frontend', 'build')
+        os.makedirs(frontend_build_path, exist_ok=True)
+        index_path = os.path.join(frontend_build_path, 'index.html')
     
     with open(index_path, 'w') as f:
         f.write("""<!DOCTYPE html>

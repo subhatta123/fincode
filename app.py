@@ -45,17 +45,24 @@ if os.environ.get('RENDER', 'false').lower() == 'true':
     ensure_directories()
     setup_render_environment()
 
-# Set up Flask app with the static folder
+# Set up Flask app with the frontend/build as the static folder
+frontend_build_path = os.path.join(os.getcwd(), 'frontend', 'build')
 static_path = os.path.join(os.getcwd(), 'static')
-print(f"Using static folder: {static_path}")
 
-# Check if static directory exists, create it if not
-if not os.path.exists(static_path):
-    os.makedirs(static_path, exist_ok=True)
-    print(f"Created static directory at {static_path}")
+# First check if frontend/build exists
+if os.path.exists(frontend_build_path) and os.path.isdir(frontend_build_path):
+    print(f"Using frontend/build as static folder: {frontend_build_path}")
+    app = Flask(__name__, static_folder=frontend_build_path, static_url_path='')
+    
+    # Copy static files to frontend/build to ensure everything is accessible
+    # This helps with logos and reports
+    os.makedirs(os.path.join(frontend_build_path, 'logos'), exist_ok=True)
+    os.makedirs(os.path.join(frontend_build_path, 'reports'), exist_ok=True)
+else:
+    # Fallback to static folder if frontend/build doesn't exist
+    print(f"Frontend/build not found. Using static folder as fallback: {static_path}")
+    app = Flask(__name__, static_folder=static_path, static_url_path='')
 
-# Initialize Flask app with static folder
-app = Flask(__name__, static_folder=static_path, static_url_path='')
 print(f"Static folder is: {app.static_folder}")
 
 # Continue with the rest of the app setup
@@ -432,13 +439,13 @@ def index():
         else:
             return redirect(url_for('normal_user_dashboard'))
     
-    # Check if static index.html exists
-    static_index_path = os.path.join(app.static_folder, 'index.html')
-    if os.path.exists(static_index_path):
-        print(f"Serving index.html from {static_index_path}")
+    # Serve index.html from the static folder
+    index_path = os.path.join(app.static_folder, 'index.html')
+    if os.path.exists(index_path):
+        print(f"Serving index.html from {index_path}")
         return app.send_static_file('index.html')
     
-    # Fallback to a simple HTML page if no static index.html exists
+    # Fallback to a simple HTML page
     return render_template_string("""
     <!DOCTYPE html>
     <html>

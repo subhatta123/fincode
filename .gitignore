@@ -56,6 +56,13 @@ static/reports/*
 static/logos/*
 !static/logos/.gitkeep
 
+# Allow frontend/build directory
+!frontend/
+!frontend/build/
+!frontend/build/index.html
+!frontend/build/logos/
+!frontend/build/reports/
+
 # Python
 __pycache__/
 *.py[cod]
