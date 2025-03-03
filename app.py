@@ -33,8 +33,22 @@ from PIL import Image
 # Load environment variables from .env file
 load_dotenv()
 
-app = Flask(__name__)
-app.secret_key = os.urandom(24)  # For session management
+# Check if app directory exists first
+if os.path.exists(os.path.join(os.path.dirname(__file__), 'app')):
+    try:
+        # Try to import the Flask app from app/__init__.py
+        from app import app
+        print("Using app from app/__init__.py")
+    except ImportError:
+        # Fall back to creating our own app
+        app = Flask(__name__)
+        app.secret_key = os.urandom(24)  # For session management
+        print("Created new Flask app instance")
+else:
+    # Create Flask app directly
+    app = Flask(__name__)
+    app.secret_key = os.urandom(24)  # For session management
+    print("Created new Flask app instance (app/ directory not found)")
 
 # Initialize managers
 user_manager = UserManagement()

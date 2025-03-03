@@ -3,8 +3,33 @@ services:
     name: tableau-data-reporter
     env: python
     region: ohio
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 180
+    buildCommand: |
+      pip install -r requirements.txt
+      mkdir -p frontend/build
+      if [ ! -f frontend/build/index.html ]; then
+        echo "Creating fallback index.html"
+        cat > frontend/build/index.html << 'EOL'
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Fincode API Server</title>
+            <style>
+                body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+                h1 { color: #333; }
+                .status { padding: 15px; background-color: #f0f8ff; border-radius: 5px; }
+            </style>
+        </head>
+        <body>
+            <h1>Fincode API Server</h1>
+            <div class="status">
+                <p>API server is running successfully.</p>
+                <p>This is a temporary frontend page. The actual frontend will be added in future deployments.</p>
+            </div>
+        </body>
+        </html>
+        EOL
+      fi
+    startCommand: gunicorn wsgi:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 180
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.0
