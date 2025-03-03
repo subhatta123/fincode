@@ -33,6 +33,17 @@ def ensure_directories():
     
     # Any other required directories
     os.makedirs('uploads/logos', exist_ok=True)
+    
+    # Check if frontend directory exists
+    frontend_build_path = os.path.join(os.getcwd(), 'frontend', 'build')
+    if os.path.exists(frontend_build_path):
+        print(f"Frontend build directory found at: {frontend_build_path}")
+    else:
+        print(f"No frontend build directory found at: {frontend_build_path}")
+        print("The application will run in API-only mode with minimal UI.")
+        
+        # Create static directory if it doesn't exist
+        os.makedirs('static', exist_ok=True)
 
 def setup_render_environment():
     """Perform all necessary setup for Render deployment"""

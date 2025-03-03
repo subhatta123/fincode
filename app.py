@@ -39,7 +39,12 @@ is_render = RENDER_CONFIG['is_render']
 if is_render:
     setup_render_environment()
 
-app = Flask(__name__)
+# Determine static folder path - first check if frontend/build exists
+frontend_path = os.path.join(os.getcwd(), 'frontend', 'build')
+static_folder_path = frontend_path if os.path.exists(frontend_path) else 'static'
+
+# Initialize Flask app
+app = Flask(__name__, static_folder=static_folder_path)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', os.urandom(24))  # For session management
 
 # Get the base URL from Render config
@@ -5824,6 +5829,53 @@ def save_email_settings_api():
             'success': False,
             'error': str(e)
         }), 500
+
+# Root endpoint to serve a basic HTML page when frontend is missing
+@app.route('/', methods=['GET'])
+def index():
+    if 'user' in session:
+        user_role = session['user'].get('role')
+        if user_role == 'superadmin':
+            return redirect(url_for('admin_dashboard'))
+        elif user_role == 'power':
+            return redirect(url_for('power_user_dashboard'))
+        else:
+            return redirect(url_for('normal_user_dashboard'))
+    else:
+        # No user session, show a basic page with login link
+        return render_template_string("""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Tableau Data Reporter</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f7f7f7; }
+                .container { max-width: 800px; margin: 50px auto; padding: 20px; background-color: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+                h1 { color: #333; }
+                .card { border: 1px solid #ddd; border-radius: 5px; padding: 20px; margin-bottom: 20px; }
+                .btn { display: inline-block; background-color: #0d6efd; color: white; padding: 10px 15px; text-decoration: none; border-radius: 4px; font-weight: bold; }
+                .info { background-color: #e7f3fe; border-left: 4px solid #2196F3; padding: 16px; margin: 20px 0; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Tableau Data Reporter</h1>
+                
+                <div class="card">
+                    <h2>Welcome to Tableau Data Reporter</h2>
+                    <p>This application allows you to connect to Tableau data sources and generate automated reports.</p>
+                    <p>Please log in to access the dashboard.</p>
+                    <a href="/login" class="btn">Login</a>
+                    <a href="/register" class="btn" style="background-color: #6c757d;">Register</a>
+                </div>
+                
+                <div class="info">
+                    <p><strong>Server Status:</strong> API server is running successfully.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """)
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8501))
