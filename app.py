@@ -52,7 +52,8 @@ static_path = os.path.join(os.getcwd(), 'static')
 # First check if frontend/build exists
 if os.path.exists(frontend_build_path) and os.path.isdir(frontend_build_path):
     print(f"Using frontend/build as static folder: {frontend_build_path}")
-    app = Flask(__name__, static_folder=frontend_build_path, static_url_path='')
+    # Use a specific static URL path prefix to avoid conflicts with routes
+    app = Flask(__name__, static_folder=frontend_build_path, static_url_path='/static_assets')
     
     # Copy static files to frontend/build to ensure everything is accessible
     # This helps with logos and reports
@@ -61,7 +62,7 @@ if os.path.exists(frontend_build_path) and os.path.isdir(frontend_build_path):
 else:
     # Fallback to static folder if frontend/build doesn't exist
     print(f"Frontend/build not found. Using static folder as fallback: {static_path}")
-    app = Flask(__name__, static_folder=static_path, static_url_path='')
+    app = Flask(__name__, static_folder=static_path, static_url_path='/static_assets')
 
 print(f"Static folder is: {app.static_folder}")
 
@@ -427,7 +428,7 @@ def register():
     ''')
 
 @app.route('/')
-def index():
+def serve_index():
     """Serve the index page."""
     # Check if user is logged in
     if 'user' in session:
@@ -443,7 +444,7 @@ def index():
     index_path = os.path.join(app.static_folder, 'index.html')
     if os.path.exists(index_path):
         print(f"Serving index.html from {index_path}")
-        return app.send_static_file('index.html')
+        return send_from_directory(app.static_folder, 'index.html')
     
     # Fallback to a simple HTML page
     return render_template_string("""
