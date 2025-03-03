@@ -282,7 +282,7 @@ def login():
                     'organization_name': user[5]
                 }
                 flash('Login successful!')
-                return redirect(url_for('home'))
+                return redirect(url_for('serve_index'))
         
         # Regular authentication for other users
         user = user_manager.verify_user(username, password)
@@ -296,7 +296,7 @@ def login():
                 'organization_name': user[5]
             }
             flash('Login successful!')
-            return redirect(url_for('home'))
+            return redirect(url_for('serve_index'))
         flash('Invalid credentials')
     
     return render_template_string('''
@@ -5882,10 +5882,28 @@ def save_email_settings_api():
             'error': str(e)
         }), 500
 
-@app.route('/health')
-def health_check():
-    """Health check endpoint for Render."""
+# Health check endpoint is already defined earlier in the file
+# The duplicate route has been removed to fix routing conflicts
+
     return jsonify({'status': 'ok'})
+
+@app.route('/debug/routes')
+def debug_routes():
+    """Debug endpoint to list all registered routes."""
+    routes = []
+    for rule in app.url_map.iter_rules():
+        methods = ','.join(sorted(rule.methods))
+        routes.append({
+            'endpoint': rule.endpoint,
+            'methods': methods,
+            'path': str(rule)
+        })
+    
+    routes_by_path = sorted(routes, key=lambda x: x['path'])
+    return jsonify({
+        'total_routes': len(routes),
+        'routes': routes_by_path
+    })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8501))
