@@ -12,6 +12,30 @@ if not os.path.exists(static_folder):
     # Create the directory to avoid errors, even if empty
     os.makedirs(static_folder, exist_ok=True)
 
+    # Create a basic index.html file if it doesn't exist
+    index_path = os.path.join(static_folder, 'index.html')
+    if not os.path.exists(index_path):
+        print(f"Creating index.html at {index_path}")
+        with open(index_path, 'w') as f:
+            f.write("""<!DOCTYPE html>
+<html>
+<head>
+    <title>Fincode API Server</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        h1 { color: #333; }
+        .status { padding: 15px; background-color: #f0f8ff; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <h1>Fincode API Server</h1>
+    <div class="status">
+        <p>API server is running successfully.</p>
+        <p>This is a temporary frontend page. The actual frontend will be added in future deployments.</p>
+    </div>
+</body>
+</html>""")
+
 # Create Flask app with the correct static folder path
 app = Flask(__name__, 
            static_folder=static_folder,
@@ -34,7 +58,8 @@ def serve(path):
     # Check if static folder exists
     if not os.path.exists(app.static_folder):
         logger.error(f"Static folder {app.static_folder} does not exist!")
-        return jsonify({"error": "Static folder not found"}), 500
+        # Create it on the fly
+        os.makedirs(app.static_folder, exist_ok=True)
     
     print(f"Serving path: {path}")  # Add debug logging
     if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
@@ -47,34 +72,26 @@ def serve(path):
         else:
             print(f"WARNING: index.html not found at {index_path}")
             # Return a fallback response if index.html is missing
-            if not os.path.exists(os.path.join(app.static_folder, 'index.html')):
-                # Return a temporary HTML page
-                return """
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <title>Fincode API Server</title>
-                    <style>
-                        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
-                        h1 { color: #333; }
-                        .status { padding: 15px; background-color: #f0f8ff; border-radius: 5px; }
-                    </style>
-                </head>
-                <body>
-                    <h1>Fincode API Server</h1>
-                    <div class="status">
-                        <p>API server is running successfully.</p>
-                        <p>Frontend application is not yet built or not found at the expected location.</p>
-                    </div>
-                </body>
-                </html>
-                """, 200, {'Content-Type': 'text/html'}
-            else:
-                return jsonify({
-                    "status": "error",
-                    "message": "Frontend not built or missing index.html",
-                    "static_folder": app.static_folder
-                }), 404
+            return """
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Fincode API Server</title>
+                <style>
+                    body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+                    h1 { color: #333; }
+                    .status { padding: 15px; background-color: #f0f8ff; border-radius: 5px; }
+                </style>
+            </head>
+            <body>
+                <h1>Fincode API Server</h1>
+                <div class="status">
+                    <p>API server is running successfully.</p>
+                    <p>Frontend application is not yet built or not found at the expected location.</p>
+                </div>
+            </body>
+            </html>
+            """, 200, {'Content-Type': 'text/html'}
 
 # Import and register blueprints
 from app.routes.scheduler import scheduler_bp
