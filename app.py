@@ -39,13 +39,39 @@ is_render = RENDER_CONFIG['is_render']
 if is_render:
     setup_render_environment()
 
-# Determine static folder path - first check if frontend/build exists
-frontend_path = os.path.join(os.getcwd(), 'frontend', 'build')
-static_folder_path = frontend_path if os.path.exists(frontend_path) else 'static'
+# Initialize Flask application
+if os.environ.get('RENDER', 'false').lower() == 'true':
+    from render_config import ensure_directories, is_running_on_render
+    ensure_directories()
+    is_running_on_render()
 
-# Initialize Flask app
-app = Flask(__name__, static_folder=static_folder_path)
-app.secret_key = os.environ.get('FLASK_SECRET_KEY', os.urandom(24))  # For session management
+# Check for frontend path first
+frontend_path = os.path.join(os.getcwd(), 'frontend', 'build')
+static_path = os.path.join(os.getcwd(), 'static')
+
+# Set up Flask app with appropriate static folder
+if os.path.exists(frontend_path) and os.path.isdir(frontend_path):
+    print(f"Frontend path: {frontend_path}")
+    print(f"Frontend exists: True")
+    app = Flask(__name__, static_folder=frontend_path, static_url_path='')
+    print(f"Static folder is: {app.static_folder}")
+    if not os.path.exists(os.path.join(frontend_path, 'index.html')):
+        print(f"WARNING: index.html not found at {os.path.join(frontend_path, 'index.html')}")
+        # Fallback to static folder
+        print(f"Using static folder as fallback: {static_path}")
+        app = Flask(__name__, static_folder=static_path, static_url_path='')
+else:
+    print(f"Frontend path: {frontend_path}")
+    print(f"Frontend exists: False")
+    print(f"Using static folder: {static_path}")
+    app = Flask(__name__, static_folder=static_path, static_url_path='')
+
+# Make sure the static directory exists, create it if not
+if not os.path.exists(static_path):
+    os.makedirs(static_path, exist_ok=True)
+
+# Continue with the rest of the app setup
+app.secret_key = os.environ.get('FLASK_SECRET_KEY', os.urandom(24))
 
 # Get the base URL from Render config
 base_url = RENDER_CONFIG['base_url']
@@ -406,17 +432,24 @@ def register():
     ''')
 
 @app.route('/')
-def home():
-    if 'user' not in session:
-        return redirect(url_for('login'))
+def index():
+    """Serve the index page."""
+    # Check if user is logged in
+    if 'user' in session:
+        user_role = session['user'].get('role')
+        if user_role == 'superadmin':
+            return redirect(url_for('admin_dashboard'))
+        elif user_role == 'power':
+            return redirect(url_for('power_user_dashboard'))
+        else:
+            return redirect(url_for('normal_user_dashboard'))
     
-    user_role = session['user'].get('role')
-    if user_role == 'superadmin':
-        return redirect(url_for('admin_dashboard'))
-    elif user_role == 'power':
-        return redirect(url_for('power_user_dashboard'))
-    else:
-        return redirect(url_for('normal_user_dashboard'))
+    # If frontend build folder is being used and index.html exists there
+    if app.static_folder == frontend_path and os.path.exists(os.path.join(frontend_path, 'index.html')):
+        return app.send_static_file('index.html')
+    
+    # If using static folder, serve our static index.html
+    return app.send_static_file('index.html')
 
 @app.route('/logout')
 def logout():
@@ -5830,52 +5863,10 @@ def save_email_settings_api():
             'error': str(e)
         }), 500
 
-# Root endpoint to serve a basic HTML page when frontend is missing
-@app.route('/', methods=['GET'])
-def index():
-    if 'user' in session:
-        user_role = session['user'].get('role')
-        if user_role == 'superadmin':
-            return redirect(url_for('admin_dashboard'))
-        elif user_role == 'power':
-            return redirect(url_for('power_user_dashboard'))
-        else:
-            return redirect(url_for('normal_user_dashboard'))
-    else:
-        # No user session, show a basic page with login link
-        return render_template_string("""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Tableau Data Reporter</title>
-            <style>
-                body { font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f7f7f7; }
-                .container { max-width: 800px; margin: 50px auto; padding: 20px; background-color: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-                h1 { color: #333; }
-                .card { border: 1px solid #ddd; border-radius: 5px; padding: 20px; margin-bottom: 20px; }
-                .btn { display: inline-block; background-color: #0d6efd; color: white; padding: 10px 15px; text-decoration: none; border-radius: 4px; font-weight: bold; }
-                .info { background-color: #e7f3fe; border-left: 4px solid #2196F3; padding: 16px; margin: 20px 0; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>Tableau Data Reporter</h1>
-                
-                <div class="card">
-                    <h2>Welcome to Tableau Data Reporter</h2>
-                    <p>This application allows you to connect to Tableau data sources and generate automated reports.</p>
-                    <p>Please log in to access the dashboard.</p>
-                    <a href="/login" class="btn">Login</a>
-                    <a href="/register" class="btn" style="background-color: #6c757d;">Register</a>
-                </div>
-                
-                <div class="info">
-                    <p><strong>Server Status:</strong> API server is running successfully.</p>
-                </div>
-            </div>
-        </body>
-        </html>
-        """)
+@app.route('/health')
+def health_check():
+    """Health check endpoint for Render."""
+    return jsonify({'status': 'ok'})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8501))
