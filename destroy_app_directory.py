@@ -30,6 +30,28 @@ def clean_directory():
     else:
         print("✓ No 'frontend' directory found (good)")
     
+    # Create a dummy frontend directory with an index.html file
+    print("Creating dummy frontend/build directory...")
+    try:
+        os.makedirs('frontend/build', exist_ok=True)
+        with open('frontend/build/index.html', 'w') as f:
+            f.write("""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Placeholder Page</title>
+            </head>
+            <body>
+                <h1>Placeholder Frontend</h1>
+                <p>This is a placeholder page for the frontend build directory.</p>
+                <p>The actual application is running at the root URL.</p>
+            </body>
+            </html>
+            """)
+        print("✓ Created dummy frontend/build/index.html")
+    except Exception as e:
+        print(f"! Failed to create dummy frontend directory: {e}")
+    
     # Try to delete the .streamlit directory
     if os.path.exists('.streamlit'):
         print("Removing '.streamlit' directory...")
