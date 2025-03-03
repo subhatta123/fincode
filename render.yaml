@@ -3,24 +3,39 @@ services:
     name: tableau-data-reporter
     env: python
     region: ohio
-    buildCommand: |
-      echo "Checking all files in directory:"
-      ls -la
-      echo "Installing minimal dependencies..."
-      pip install flask==2.0.1 gunicorn==20.1.0
-    startCommand: gunicorn minimal_app:app --bind 0.0.0.0:$PORT --log-level debug
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn wsgi:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 180
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.0
-      - key: FLASK_APP
-        value: minimal_app.py
-      - key: FLASK_ENV
-        value: production
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+      - key: SMTP_SERVER
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SENDER_EMAIL
+        sync: false
+      - key: SENDER_PASSWORD
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_WHATSAPP_NUMBER
+        sync: false
+      - key: BASE_URL
+        sync: false
       - key: RENDER
         value: true
-      - key: PYTHONUNBUFFERED
-        value: true
+      - key: RENDER_EXTERNAL_URL
+        fromService:
+          type: web
+          name: tableau-data-reporter
+          property: url
     disk:
       name: data
       mountPath: /opt/render/project/src/data
-      sizeGB: 1 
+      sizeGB: 1
+    healthCheckPath: /health
+    autoDeploy: true 

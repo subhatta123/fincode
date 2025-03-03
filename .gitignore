@@ -4,6 +4,64 @@ __pycache__/
 *$py.class
 *.so
 .Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Environment variables
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Database
+*.db
+*.sqlite3
+
+# Logs
+*.log
+
+# Runtime data
+data/
+
+# Temporary files
+*.tmp
+temp/
+
+# Specific to this app
+uploads/
+static/reports/*
+!static/reports/.gitkeep
+
+# Keep the static directory structure but not the contents
+static/logos/*
+!static/logos/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
 build/
 develop-eggs/
 dist/

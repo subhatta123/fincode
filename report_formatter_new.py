@@ -103,7 +103,7 @@ class ReportFormatter:
         if not path:
             return path
         return path.replace('\\', '/').replace('\\', '/')
-
+    
     def _resize_image(self, image_data, max_width=6*inch, max_height=2*inch):
         """Resize the image to fit within the specified dimensions"""
         try:
@@ -286,7 +286,7 @@ class ReportFormatter:
         page_size_value = self.page_size
         if isinstance(page_size_value, tuple) and len(page_size_value) > 0:
             page_size_value = str(page_size_value[0])
-        else:
+            else:
             page_size_value = str(page_size_value)
             
         # Use page size and orientation from format config
@@ -295,16 +295,16 @@ class ReportFormatter:
         orientation_value = self.orientation
         if isinstance(orientation_value, tuple) and len(orientation_value) > 0:
             orientation_value = str(orientation_value[0])
-        else:
+            else:
             orientation_value = str(orientation_value)
             
         if orientation_value.lower() == 'landscape':
             page_size = landscape(page_size)
         
         # Apply margins
-        doc = SimpleDocTemplate(
-            buffer,
-            pagesize=page_size,
+            doc = SimpleDocTemplate(
+                buffer,
+                pagesize=page_size,
             rightMargin=self.margins[0],
             leftMargin=self.margins[1],
             topMargin=self.margins[2],
@@ -453,7 +453,7 @@ class ReportFormatter:
                     if not numeric_cols.empty:
                         total_row = df[numeric_cols].sum()
                         summary_text += "<b>Column Totals:</b><br/>"
-                    for col in numeric_cols:
+                for col in numeric_cols:
                         total_val = total_row[col]
                         summary_text += f"- {col}: {total_val:,.2f}<br/>"
                 except Exception as e:
@@ -465,7 +465,7 @@ class ReportFormatter:
                     if not numeric_cols.empty:
                         avg_row = df[numeric_cols].mean()
                         summary_text += "<b>Column Averages:</b><br/>"
-                    for col in numeric_cols:
+                for col in numeric_cols:
                         avg_val = avg_row[col]
                         summary_text += f"- {col}: {avg_val:,.2f}<br/>"
                 except Exception as e:
@@ -490,12 +490,12 @@ class ReportFormatter:
                 table_data.append(row.tolist())
             
             # Calculate column widths based on content
-            col_widths = []
-            for col_idx in range(len(df.columns)):
+        col_widths = []
+        for col_idx in range(len(df.columns)):
                 col_content = [str(row[col_idx]) for row in table_data]
-                max_content_len = max(len(str(content)) for content in col_content)
-                col_widths.append(min(max_content_len * 7, 200))  # Scale factor of 7, max width 200
-            
+            max_content_len = max(len(str(content)) for content in col_content)
+            col_widths.append(min(max_content_len * 7, 200))  # Scale factor of 7, max width 200
+        
             # Create table
             table = Table(table_data, colWidths=col_widths)
             
@@ -523,9 +523,9 @@ class ReportFormatter:
             print(f"Error generating table: {str(e)}")
         
         try:
-            doc.build(elements)
-            buffer.seek(0)
-            return buffer
+        doc.build(elements)
+        buffer.seek(0)
+        return buffer
         except Exception as e:
             print(f"Error building PDF: {str(e)}")
             raise
