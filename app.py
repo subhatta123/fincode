@@ -41,34 +41,22 @@ if is_render:
 
 # Initialize Flask application
 if os.environ.get('RENDER', 'false').lower() == 'true':
-    from render_config import ensure_directories, is_running_on_render
+    from render_config import ensure_directories, is_running_on_render, setup_render_environment
     ensure_directories()
-    is_running_on_render()
+    setup_render_environment()
 
-# Check for frontend path first
-frontend_path = os.path.join(os.getcwd(), 'frontend', 'build')
+# Set up Flask app with the static folder
 static_path = os.path.join(os.getcwd(), 'static')
+print(f"Using static folder: {static_path}")
 
-# Set up Flask app with appropriate static folder
-if os.path.exists(frontend_path) and os.path.isdir(frontend_path):
-    print(f"Frontend path: {frontend_path}")
-    print(f"Frontend exists: True")
-    app = Flask(__name__, static_folder=frontend_path, static_url_path='')
-    print(f"Static folder is: {app.static_folder}")
-    if not os.path.exists(os.path.join(frontend_path, 'index.html')):
-        print(f"WARNING: index.html not found at {os.path.join(frontend_path, 'index.html')}")
-        # Fallback to static folder
-        print(f"Using static folder as fallback: {static_path}")
-        app = Flask(__name__, static_folder=static_path, static_url_path='')
-else:
-    print(f"Frontend path: {frontend_path}")
-    print(f"Frontend exists: False")
-    print(f"Using static folder: {static_path}")
-    app = Flask(__name__, static_folder=static_path, static_url_path='')
-
-# Make sure the static directory exists, create it if not
+# Check if static directory exists, create it if not
 if not os.path.exists(static_path):
     os.makedirs(static_path, exist_ok=True)
+    print(f"Created static directory at {static_path}")
+
+# Initialize Flask app with static folder
+app = Flask(__name__, static_folder=static_path, static_url_path='')
+print(f"Static folder is: {app.static_folder}")
 
 # Continue with the rest of the app setup
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', os.urandom(24))
@@ -444,12 +432,35 @@ def index():
         else:
             return redirect(url_for('normal_user_dashboard'))
     
-    # If frontend build folder is being used and index.html exists there
-    if app.static_folder == frontend_path and os.path.exists(os.path.join(frontend_path, 'index.html')):
+    # Check if static index.html exists
+    static_index_path = os.path.join(app.static_folder, 'index.html')
+    if os.path.exists(static_index_path):
+        print(f"Serving index.html from {static_index_path}")
         return app.send_static_file('index.html')
     
-    # If using static folder, serve our static index.html
-    return app.send_static_file('index.html')
+    # Fallback to a simple HTML page if no static index.html exists
+    return render_template_string("""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Tableau Data Reporter</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+            .container { max-width: 800px; margin: 0 auto; }
+            h1 { color: #0066cc; }
+            .btn { display: inline-block; background-color: #0066cc; color: white; padding: 10px 15px; margin-top: 15px; text-decoration: none; border-radius: 4px; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Tableau Data Reporter</h1>
+            <p>API server is running. Please log in to access the application.</p>
+            <a href="/login" class="btn">Login</a>
+            <a href="/register" class="btn" style="background-color: #666;">Register</a>
+        </div>
+    </body>
+    </html>
+    """)
 
 @app.route('/logout')
 def logout():

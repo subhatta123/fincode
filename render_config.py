@@ -12,19 +12,18 @@ from pathlib import Path
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, 
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+                   format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 def is_running_on_render():
-    """Check if the application is running on Render"""
+    """Check if the application is running on Render."""
     return os.environ.get('RENDER', 'false').lower() == 'true'
 
 def get_base_url():
-    """Get the base URL for the application based on environment"""
+    """Get the base URL for the application based on environment."""
     if is_running_on_render():
         return os.environ.get('RENDER_EXTERNAL_URL', 'http://localhost:5000')
-    else:
-        return os.environ.get('BASE_URL', 'http://localhost:8501')
+    return os.environ.get('BASE_URL', 'http://localhost:5000')
 
 def ensure_directories():
     """Create necessary directories if they don't exist."""
@@ -42,23 +41,13 @@ def ensure_directories():
             logger.info(f"Creating directory: {dir_path}")
             os.makedirs(dir_path, exist_ok=True)
     
-    # Check for frontend build directory
-    frontend_path = os.path.join(os.getcwd(), 'frontend', 'build')
-    if os.path.exists(frontend_path):
-        logger.info(f"Frontend build directory found: {frontend_path}")
-        # Check if frontend/build/index.html exists
-        index_path = os.path.join(frontend_path, 'index.html')
-        if not os.path.exists(index_path):
-            logger.warning(f"index.html not found in frontend build directory")
-    else:
-        logger.info(f"No frontend build directory found. Will use static directory instead.")
-        
     # Ensure static/index.html exists
     static_index_path = os.path.join(os.getcwd(), 'static', 'index.html')
     if not os.path.exists(static_index_path):
-        logger.info(f"Creating default index.html in static directory")
-        # Create a minimal default index.html if needed
+        logger.info(f"Static index.html not found - creating default index.html")
         create_default_index_html()
+    else:
+        logger.info(f"Static index.html exists at {static_index_path}")
 
 def create_default_index_html():
     """Create a default index.html file in the static directory."""
@@ -193,8 +182,13 @@ def create_default_index_html():
 def setup_render_environment():
     """Set up environment variables for Render deployment."""
     if is_running_on_render():
+        logger.info("Running on Render: Setting up environment...")
         os.environ['FLASK_ENV'] = 'production'
         os.environ['RENDER'] = 'true'
+        
+        # Ensure all directories exist
+        ensure_directories()
+        
     return is_running_on_render()
 
 # Export constants

@@ -5,37 +5,28 @@ import os
 import sys
 import logging
 from app import app
-from render_config import is_running_on_render, setup_render_environment
 
 # Set up logging for clearer debug information
 logging.basicConfig(level=logging.INFO, 
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+                   format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-# Initialize Render environment if needed
-if is_running_on_render():
-    print("Running on Render: Setting up environment...")
-    setup_render_environment()
 
 # Print debug information
 logger.info(f"Python version: {sys.version}")
 logger.info(f"Current working directory: {os.getcwd()}")
 
-# Check static folders
+# Check static folder
 static_path = os.path.join(os.getcwd(), 'static')
-frontend_path = os.path.join(os.getcwd(), 'frontend', 'build')
-
 logger.info(f"Static directory exists: {os.path.exists(static_path)}")
-logger.info(f"Frontend directory exists: {os.path.exists(frontend_path)}")
 
-if os.path.exists(frontend_path):
-    # Check if index.html exists in frontend/build
-    index_exists = os.path.exists(os.path.join(frontend_path, 'index.html'))
-    logger.info(f"Frontend index.html exists: {index_exists}")
-else:
-    # Check if index.html exists in static folder
-    index_exists = os.path.exists(os.path.join(static_path, 'index.html'))
-    logger.info(f"Static index.html exists: {index_exists}")
+# Check if index.html exists in static folder
+index_exists = os.path.exists(os.path.join(static_path, 'index.html'))
+logger.info(f"Static index.html exists: {index_exists}")
+
+# Check environment variables
+render_vars = [key for key in os.environ.keys() if key.startswith('RENDER_') or key.startswith('FLASK_')]
+logger.info(f"Number of Render/Flask environment variables: {len(render_vars)}")
+logger.info(f"Running on Render: {os.environ.get('RENDER', 'false')}")
 
 # Entry point for the application
 if __name__ == "__main__":
