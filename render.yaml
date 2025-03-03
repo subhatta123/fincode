@@ -4,7 +4,7 @@ services:
     env: python
     region: ohio
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app_middleware_fix:application --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 180
+    startCommand: gunicorn direct_access:application --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 180
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.0
@@ -41,5 +41,5 @@ services:
       name: data
       mountPath: /opt/render/project/src/data
       sizeGB: 1
-    healthCheckPath: /health
+    healthCheckPath: /
     autoDeploy: true 
