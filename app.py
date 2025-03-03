@@ -214,7 +214,7 @@ def role_required(roles):
         def decorated_function(*args, **kwargs):
             if 'user' not in session or session['user'].get('role') not in roles:
                 flash('Access denied')
-                return redirect(url_for('home'))
+                return redirect(url_for('serve_index'))
             return f(*args, **kwargs)
         return decorated_function
     return decorator
