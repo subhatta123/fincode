@@ -44,10 +44,10 @@ data_analyzer = DataAnalyzer()
 report_formatter = ReportFormatter()
 
 # Add these configurations at the top of the file after app initialization
-UPLOAD_FOLDER = 'static/logos'
+UPLOAD_FOLDER = 'static/uploads/logos'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB max upload
+app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024  # 2MB max file size
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -1753,19 +1753,15 @@ def process_schedule_form():
                     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                     filename = f"{timestamp}_{filename}"
                     
-                    # Create directory if it doesn't exist - use a single, simple path
-                    logos_dir = 'static/logos'
+                    # Create directory if it doesn't exist
+                    logos_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'logos')
                     os.makedirs(logos_dir, exist_ok=True)
-                    
-                    # No longer needed - using only one location
-                    # uploads_logos_dir = os.path.join('uploads', 'logos')
-                    # os.makedirs(uploads_logos_dir, exist_ok=True)
                     
                     filepath = os.path.join(logos_dir, filename)
                     logo_file.save(filepath)
                     
-                    # Store the relative path to the logo - simpler path
-                    format_config['header_logo'] = 'static/logos/' + filename
+                    # Store the relative path to the logo
+                    format_config['header_logo'] = os.path.join('uploads/logos', filename)
                 else:
                     format_config['header_logo'] = ''
             else:
@@ -3406,7 +3402,7 @@ def schedule_dataset(dataset):
                             <div id="oneTimeOptions" class="schedule-options active">
                                 <div class="mb-3">
                                     <label for="date" class="form-label">Date</label>
-                                    <input type="date" class="form-control" id="date" name="date" data-required="one-time">
+                                    <input type="date" class="form-control" id="date" name="date" required>
                                 </div>
                             </div>
                             
@@ -3685,23 +3681,9 @@ def schedule_dataset(dataset):
                                 </div>
                                 <div id="columnSelectionDiv" class="mt-2">
                                     <select class="form-select" id="selected_columns" name="selected_columns" multiple size="5">
-                                        <!-- Directly show columns for Superstore dataset as fallback -->
-                                        {% if dataset_columns %}
-                                            {% for column in dataset_columns %}
-                                                <option value="{{ column }}">{{ column }}</option>
-                                            {% endfor %}
-                                        {% else %}
-                                            <!-- Fallback options for Superstore -->
-                                            <option value="Measure Names">Measure Names</option>
-                                            <option value="Region">Region</option>
-                                            <option value="Profit Ratio">Profit Ratio</option>
-                                            <option value="Sales per Customer">Sales per Customer</option>
-                                            <option value="Distinct count of Customer Name">Distinct count of Customer Name</option>
-                                            <option value="Measure Values">Measure Values</option>
-                                            <option value="Profit">Profit</option>
-                                            <option value="Quantity">Quantity</option>
-                                            <option value="Sales">Sales</option>
-                                        {% endif %}
+                                        {% for column in dataset_columns %}
+                                            <option value="{{ column }}">{{ column }}</option>
+                                        {% endfor %}
                                     </select>
                                     <small class="form-text text-muted">
                                         Hold Ctrl (or Cmd on Mac) to select multiple columns. If none selected, all columns will be included.
@@ -4039,39 +4021,13 @@ def schedule_dataset(dataset):
                             }
                         }
                         
-                        // Validate based on schedule type
-                        const scheduleTypeValue = scheduleType.value;
-                        
-                        // For one-time schedules, validate date
-                        if (scheduleTypeValue === 'one-time') {
-                            const dateField = document.getElementById('date');
-                            if (!dateField.value) {
-                                e.preventDefault();
-                                alert('Please select a date for the one-time schedule');
-                                return false;
-                            }
-                        }
-                        
                         // For weekly schedules, validate days
-                        if (scheduleTypeValue === 'weekly') {
+                        if (scheduleType.value === 'weekly') {
                             const days = document.querySelectorAll('input[name="days"]:checked');
                             if (days.length === 0) {
                                 e.preventDefault();
                                 alert('Please select at least one day of the week');
                                 return false;
-                            }
-                        }
-                        
-                        // For monthly schedules, validate day selection
-                        if (scheduleTypeValue === 'monthly') {
-                            const dayOption = document.querySelector('select[name="day_option"]');
-                            if (dayOption.value === 'Specific Day') {
-                                const day = document.getElementById('day');
-                                if (!day.value) {
-                                    e.preventDefault();
-                                    alert('Please select a specific day of the month');
-                                    return false;
-                                }
                             }
                         }
                         
@@ -5410,12 +5366,6 @@ def edit_schedule(schedule_id):
                                 case 'one-time':
                                     document.getElementById('oneTimeOptions').classList.add('active');
                                     break;
-                                case 'daily':
-                                    document.getElementById('dailyOptions').classList.add('active');
-                                    break;
-                                case 'daily':
-                                    document.getElementById('dailyOptions').classList.add('active');
-                                    break;
                                 case 'weekly':
                                     document.getElementById('weeklyOptions').classList.add('active');
                                     break;
@@ -5423,16 +5373,6 @@ def edit_schedule(schedule_id):
                                     document.getElementById('monthlyOptions').classList.add('active');
                                     break;
                             }
-
-                    // Add conditional validation for date input based on schedule type
-                    const dateInput = document.getElementById('date');
-                    scheduleType.addEventListener('change', function() {
-                        if (this.value === 'one-time') {
-                            dateInput.setAttribute('required', '');
-                        } else {
-                            dateInput.removeAttribute('required');
-                        }
-                    });
                         });
                         
                         // Monthly day option
@@ -5629,66 +5569,6 @@ def update_schedule(schedule_id):
         if format_type == 'pdf':
             format_config['page_size'] = data.get('page_size', 'a4')
             format_config['orientation'] = data.get('orientation', 'portrait')
-            format_config['font_family'] = data.get('font_family', 'Helvetica')
-            format_config['font_size'] = int(data.get('font_size', 10))
-            format_config['line_height'] = float(data.get('line_height', 1.5))
-            
-            # Handle header settings
-            format_config['include_header'] = data.get('include_header') == 'on'
-            if format_config['include_header']:
-                format_config['header_title'] = data.get('header_title', 'Report')
-                
-                # Handle logo file upload
-                logo_file = request.files.get('header_logo')
-                if logo_file and logo_file.filename:
-                    # Validate the image file
-                    is_valid, validation_message = validate_image(logo_file)
-                    if not is_valid:
-                        flash(validation_message, 'error')
-                        return redirect(url_for('edit_schedule', schedule_id=schedule_id))
-                    
-                    # Save the file
-                    filename = secure_filename(logo_file.filename)
-                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                    filename = f"{timestamp}_{filename}"
-                    
-                    # Create directory if it doesn't exist - use a single, simple path
-                    logos_dir = 'static/logos'
-                    os.makedirs(logos_dir, exist_ok=True)
-                    
-                    # No longer needed - using only one location
-                    # uploads_logos_dir = os.path.join('uploads', 'logos')
-                    # os.makedirs(uploads_logos_dir, exist_ok=True)
-                    
-                    filepath = os.path.join(logos_dir, filename)
-                    logo_file.save(filepath)
-                    
-                    # Store the relative path to the logo - simpler path
-                    format_config['header_logo'] = 'static/logos/' + filename
-                else:
-                    # Keep the existing logo if no new one was uploaded
-                    existing_schedule = report_manager.get_schedule(schedule_id)
-                    if existing_schedule and existing_schedule.get('format_config', {}).get('header_logo'):
-                        format_config['header_logo'] = existing_schedule['format_config']['header_logo']
-                    else:
-                        format_config['header_logo'] = ''
-                
-                format_config['header_color'] = data.get('header_color', '#0d6efd')
-                format_config['header_alignment'] = data.get('header_alignment', 'center')
-                
-            # Handle content settings
-            format_config['include_summary'] = data.get('include_summary') == 'on'
-            format_config['include_visualization'] = data.get('include_visualization') == 'on'
-            
-            # Handle column selection
-            if data.get('select_columns') == 'on':
-                selected_columns = data.getlist('selected_columns')
-                if selected_columns:
-                    format_config['selected_columns'] = selected_columns
-            
-            # Handle row limit
-            if data.get('limit_rows') == 'on':
-                format_config['max_rows'] = int(data.get('max_rows', 1000))
         elif format_type == 'excel':
             format_config['sheet_name'] = data.get('sheet_name', 'Sheet1')
         elif format_type == 'csv':

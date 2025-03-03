@@ -267,7 +267,7 @@ _(Link expires in 24 hours)_"""
         """Schedule a report"""
         try:
             # Improved implementation for better timezone handling
-            print(f"Scheduling report for dataset: {dataset_name}")
+        print(f"Scheduling report for dataset: {dataset_name}")
             
             # Validate inputs
             if not dataset_name:

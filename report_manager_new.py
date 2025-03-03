@@ -23,10 +23,18 @@ import shutil
 import pytz
 import tableauserverclient as TSC
 from tableau_utils import authenticate, download_and_save_data
+from dotenv import load_dotenv
+from email.mime.base import MIMEBase
+from email import encoders
+from report_formatter_new import ReportFormatter
+import traceback
 
 class ReportManager:
     def __init__(self):
         """Initialize report manager"""
+        # Load environment variables
+        load_dotenv()
+        
         self.data_dir = Path("data")
         self.data_dir.mkdir(exist_ok=True)
         
@@ -45,16 +53,39 @@ class ReportManager:
         self.db_path = 'data/tableau_data.db'
         self._init_database()
         
-        # Load email settings from environment variables
+        # Load email settings from environment variables with explicit error checking
         self.smtp_server = os.getenv('SMTP_SERVER')
         self.smtp_port = os.getenv('SMTP_PORT')
         self.sender_email = os.getenv('SENDER_EMAIL')
         self.sender_password = os.getenv('SENDER_PASSWORD')
         
+        # Verify email configuration
+        missing_fields = []
+        if not self.smtp_server:
+            missing_fields.append('SMTP_SERVER')
+        if not self.smtp_port:
+            missing_fields.append('SMTP_PORT')
+        if not self.sender_email:
+            missing_fields.append('SENDER_EMAIL')
+        if not self.sender_password:
+            missing_fields.append('SENDER_PASSWORD')
+            
+        if missing_fields:
+            print(f"Warning: Missing email configuration fields: {', '.join(missing_fields)}")
+            print("Please check your .env file")
+        else:
+            print("\nEmail Configuration loaded successfully:")
+            print(f"SMTP Server: {self.smtp_server}")
+            print(f"SMTP Port: {self.smtp_port}")
+            print(f"Sender Email: {self.sender_email}")
+            print(f"Password Set: {'Yes' if self.sender_password else 'No'}\n")
+        
+        # Set base URL for report access
+        self.base_url = os.getenv('BASE_URL', 'http://localhost:8501')
+        
         # Initialize scheduler
         self.scheduler = BackgroundScheduler()
         self.scheduler.start()
-        self.load_saved_schedules()
         
         # Initialize Twilio client for WhatsApp
         self.twilio_client = None
@@ -70,6 +101,9 @@ class ReportManager:
                 print(f"Failed to initialize Twilio client: {str(e)}")
         else:
             print("Twilio configuration incomplete. Please check your .env file")
+            
+        # Load saved schedules after everything is initialized
+        self.load_saved_schedules()
     
     def _init_database(self):
         """Initialize SQLite database"""
@@ -290,391 +324,209 @@ class ReportManager:
             print(f"Error details: {e.__dict__ if hasattr(e, '__dict__') else 'No details'}")
             return None
 
-    def save_report(self, df: pd.DataFrame, dataset_name: str) -> Path:
-        """Save a report to the public reports directory"""
+    def send_report(self, dataset_name: str, email_config: dict, format_config: dict = None):
+        """Send a report with the specified dataset and configurations."""
         try:
-            # Generate PDF from DataFrame
-            pdf_buffer = self.generate_pdf(df, f"Report: {dataset_name}")
+            print(f"Sending report for dataset: {dataset_name}")
+            print(f"Email config: {email_config}")
+            print(f"Format config: {format_config if format_config else 'None'}")
             
-            # Generate a unique filename using a hash of the content and timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            content_hash = hashlib.sha256(pdf_buffer.getvalue()).hexdigest()
-            filename = f"{content_hash}_{timestamp}.pdf"
+            # Ensure format_config is a dictionary
+            if not format_config:
+                format_config = {}
+            elif not isinstance(format_config, dict):
+                format_config = json.loads(format_config) if isinstance(format_config, str) else {}
             
-            # Save to public reports directory
-            report_path = self.public_reports_dir / filename
+            # Prepare the email configuration
+            recipients = email_config.get('recipients', [])
+            if isinstance(recipients, str):
+                recipients = [r.strip() for r in recipients.split(',') if r.strip()]
+            
+            cc = email_config.get('cc', [])
+            if isinstance(cc, str):
+                cc = [c.strip() for c in cc.split(',') if c.strip()]
+            
+            # Load the dataset directly
+            print(f"Loading dataset: {dataset_name}")
+            try:
+                # Connect to the database
+                conn = sqlite3.connect(self.db_path)
+                # Set row_factory to None to get raw tuples
+                conn.row_factory = None
+                cursor = conn.cursor()
+                
+                # Check if the table exists
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (dataset_name,))
+                if not cursor.fetchone():
+                    raise ValueError(f"Dataset table not found: {dataset_name}")
+                
+                # Get column names from table info
+                cursor.execute(f"PRAGMA table_info({dataset_name})")
+                columns = [col[1] for col in cursor.fetchall()]
+                
+                # Get the data
+                cursor.execute(f"SELECT * FROM {dataset_name}")
+                rows = cursor.fetchall()
+                
+                # Create DataFrame
+                df = pd.DataFrame(rows, columns=columns)
+                
+                # Convert all columns to strings, handling tuples
+                for col in df.columns:
+                    df[col] = df[col].apply(lambda x: str(x[0]) if isinstance(x, tuple) else str(x))
+                
+                conn.close()
+                
+                if df.empty:
+                    raise ValueError(f"No data found in dataset: {dataset_name}")
+                
+            except Exception as db_error:
+                print(f"Database error: {str(db_error)}")
+                raise
+            
+            # Set up the formatter with format config
+            try:
+                # Import here as a fallback in case the module import fails
+                from report_formatter_new import ReportFormatter
+                formatter = ReportFormatter()
+                
+                # Process format_config - ensure it's a dictionary with proper values
+                if format_config:
+                    if isinstance(format_config, str):
+                        try:
+                            format_config = json.loads(format_config)
+                        except:
+                            print("Warning: Could not parse format_config JSON string")
+                            format_config = {}
+                else:
+                    format_config = {}
+                
+                # Print format config for debugging
+                print(f"Applying format config: {format_config}")
+                
+                # Ensure title is properly set
+                if 'header_title' not in format_config and 'title' in format_config:
+                    format_config['header_title'] = format_config['title']
+                
+                # Apply format settings explicitly
+                formatter.set_format_config(format_config)
+                
+                # Get report title from format config or use default
+                report_title = format_config.get('header_title', format_config.get('title', f"Report for {dataset_name}"))
+            except ImportError:
+                print("Error importing ReportFormatter class")
+                raise
+            
+            # Make sure title is a string
+            report_title = str(report_title)
+            print(f"Using report title: {report_title}")
+            
+            # Generate the report
+            print(f"Generating report with title: {report_title}")
+            try:
+                # Include all formatting options in the generate_report call
+                pdf_buffer = formatter.generate_report(
+                    df,
+                    report_title=report_title,
+                    include_row_count=format_config.get('include_summary', True),
+                    include_totals=format_config.get('include_summary', True),
+                    include_averages=format_config.get('include_summary', True),
+                    selected_columns=format_config.get('selected_columns', None)
+                )
+            except Exception as format_error:
+                print(f"Error generating report: {str(format_error)}")
+                raise
+            
+            # Save the report
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            hash_obj = hashlib.sha256(f"{dataset_name}_{timestamp}".encode())
+            filename = f"{hash_obj.hexdigest()}_{timestamp}.pdf"
+            
+            # Save to static/reports directory to make it accessible via URL
+            reports_dir = Path('static/reports')
+            reports_dir.mkdir(parents=True, exist_ok=True)
+            report_path = reports_dir / filename
+            
+            # Write the PDF data to the file
             with open(report_path, 'wb') as f:
                 f.write(pdf_buffer.getvalue())
             
-            print(f"Saved report to: {report_path}")
-            return report_path
+            print(f"Report saved to: {report_path}")
             
+            # Create the URL path that can be accessed by the web server
+            if self.base_url:
+                report_url = f"{self.base_url}/static/reports/{filename}"
+            else:
+                report_url = f"/static/reports/{filename}"
+            
+            print(f"Generated report URL: {report_url}")
+            
+            # Create the email body
+            email_body = email_config.get('body', 'Please find the attached report.')
+            try:
+                # Add the URL link to the email body
+                email_body += f"\n\nYou can also view the report at: {report_url}"
+            except Exception as link_error:
+                print(f"Warning: Could not generate shareable link: {str(link_error)}")
+            
+            # Send the email
+            try:
+                # Get SMTP settings
+                smtp_server = email_config.get('smtp_server', os.getenv('SMTP_SERVER'))
+                smtp_port = int(email_config.get('smtp_port', os.getenv('SMTP_PORT', 587)))
+                sender_email = email_config.get('sender_email', os.getenv('SENDER_EMAIL'))
+                sender_password = email_config.get('sender_password', os.getenv('SENDER_PASSWORD'))
+                
+                print(f"Sending email via {smtp_server}:{smtp_port}")
+                print(f"From: {sender_email}")
+                print(f"To: {recipients}")
+                print(f"CC: {cc}")
+                print(f"Subject: {email_config.get('subject', f'Report for {dataset_name}')}")
+                
+                if not smtp_server or not sender_email or not sender_password:
+                    raise ValueError("Missing required email configuration fields")
+                
+                # Create message
+                msg = MIMEMultipart()
+                msg['From'] = sender_email
+                msg['To'] = ', '.join(recipients)
+                if cc:
+                    msg['Cc'] = ', '.join(cc)
+                msg['Subject'] = email_config.get('subject', f"Report for {dataset_name}")
+                
+                # Add body
+                msg.attach(MIMEText(email_body, 'plain'))
+                
+                # Add attachment
+                with open(report_path, 'rb') as f:
+                    part = MIMEBase('application', 'octet-stream')
+                    part.set_payload(f.read())
+                
+                encoders.encode_base64(part)
+                part.add_header(
+                    'Content-Disposition',
+                    f'attachment; filename="{filename}"'
+                )
+                msg.attach(part)
+                
+                # Send email
+                with smtplib.SMTP(smtp_server, smtp_port) as server:
+                    server.starttls()
+                    server.login(sender_email, sender_password)
+                    server.send_message(msg)
+                
+                print(f"Email sent successfully to {recipients}")
+                return True
+            
+            except Exception as email_error:
+                print(f"Error sending email: {str(email_error)}")
+                print(f"Email config: SMTP={smtp_server}, Port={smtp_port}, Sender={sender_email}, Password set: {bool(sender_password)}")
+                raise
+                
         except Exception as e:
-            print(f"Failed to save report: {str(e)}")
+            print(f"Failed to send report: {str(e)}")
             print(f"Error details: {e.__dict__ if hasattr(e, '__dict__') else 'No details'}")
-            return None
-
-    def get_report_url(self, report_path: Path) -> str:
-        """Get the URL for accessing a report"""
-        try:
-            if not report_path.exists():
-                print(f"Report file does not exist: {report_path}")
-                return None
-                
-            # Get the filename
-            filename = report_path.name
-            
-            # Generate the URL with proper formatting
-            # Remove any backslashes and use forward slashes for web URLs
-            url = f"{self.base_url.rstrip('/')}/static/reports/{filename}"
-            print(f"Generated report URL: {url}")
-            return url
-            
-        except Exception as e:
-            print(f"Failed to generate report URL: {str(e)}")
-            return None
-
-    def _serialize_format_config(self, format_config):
-        """Serialize format config for JSON storage"""
-        if not format_config:
-            return None
-            
-        # Create a serializable copy of the format config
-        serializable_config = {}
-        
-        # Handle basic configuration
-        for key in ['page_size', 'orientation', 'margins', 'chart_size', 'report_content']:
-            if key in format_config:
-                serializable_config[key] = format_config[key]
-        
-        # Handle title style
-        if 'title_style' in format_config:
-            title_style = format_config['title_style']
-            if isinstance(title_style, ParagraphStyle):
-                # Convert color to hex string if it exists
-                text_color = getattr(title_style, 'textColor', None)
-                if text_color:
-                    if hasattr(text_color, 'rgb'):
-                        # Convert RGB values to integers (0-255)
-                        rgb = [int(x * 255) if isinstance(x, float) else x for x in text_color.rgb()]
-                        text_color = '#{:02x}{:02x}{:02x}'.format(*rgb)
-                    elif hasattr(text_color, 'hexval'):
-                        text_color = '#{:06x}'.format(text_color.hexval())
-                    else:
-                        text_color = '#000000'
-                else:
-                    text_color = '#000000'
-                    
-                serializable_config['title_style'] = {
-                    'fontName': getattr(title_style, 'fontName', 'Helvetica'),
-                    'fontSize': getattr(title_style, 'fontSize', 24),
-                    'alignment': getattr(title_style, 'alignment', 1),  # 0=left, 1=center, 2=right
-                    'textColor': text_color,
-                    'spaceAfter': getattr(title_style, 'spaceAfter', 30)
-                }
-        
-        # Handle table style
-        if 'table_style' in format_config:
-            table_style = format_config['table_style']
-            if hasattr(table_style, 'commands'):
-                serializable_config['table_style'] = []
-                for cmd in table_style.commands:
-                    try:
-                        if len(cmd) != 4:
-                            continue
-                            
-                        cmd_name, start_pos, end_pos, value = cmd
-                        
-                        # Convert color objects to hex strings
-                        if hasattr(value, 'rgb'):
-                            rgb = [int(x * 255) if isinstance(x, float) else x for x in value.rgb()]
-                            value = '#{:02x}{:02x}{:02x}'.format(*rgb)
-                        elif hasattr(value, 'hexval'):
-                            value = '#{:06x}'.format(value.hexval())
-                        elif isinstance(value, (int, float)):
-                            value = float(value)
-                        
-                        # Convert tuples to lists for JSON serialization
-                        serialized_cmd = [
-                            cmd_name,
-                            list(start_pos) if isinstance(start_pos, tuple) else start_pos,
-                            list(end_pos) if isinstance(end_pos, tuple) else end_pos,
-                            value
-                        ]
-                        serializable_config['table_style'].append(serialized_cmd)
-                    except Exception as e:
-                        print(f"Error serializing table style command {cmd}: {str(e)}")
-                        continue
-        
-        return serializable_config
-    
-    def _deserialize_format_config(self, serialized_config):
-        """Deserialize format config from JSON storage"""
-        if not serialized_config:
-            return None
-            
-        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-        from reportlab.lib.colors import HexColor, Color
-        from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
-        
-        # Create a new format config
-        format_config = {
-            'page_size': serialized_config.get('page_size', None),
-            'orientation': serialized_config.get('orientation', 'portrait'),
-            'margins': serialized_config.get('margins', None),
-            'chart_size': serialized_config.get('chart_size', None),
-            'report_content': serialized_config.get('report_content', {})
-        }
-        
-        # Reconstruct title style
-        if 'title_style' in serialized_config:
-            title_style_data = serialized_config['title_style']
-            alignment_map = {0: TA_LEFT, 1: TA_CENTER, 2: TA_RIGHT}
-            
-            # Convert hex color string to Color object
-            text_color = title_style_data.get('textColor', '#000000')
-            if isinstance(text_color, str) and text_color.startswith('#'):
-                text_color = HexColor(text_color)
-            
-            # Get base styles
-            styles = getSampleStyleSheet()
-            
-            # Create title style with proper parent
-            format_config['title_style'] = ParagraphStyle(
-                'CustomTitle',
-                parent=styles['Title'],
-                fontName=title_style_data.get('fontName', 'Helvetica'),
-                fontSize=title_style_data.get('fontSize', 24),
-                alignment=alignment_map.get(title_style_data.get('alignment', 1), TA_CENTER),
-                textColor=text_color,
-                spaceAfter=title_style_data.get('spaceAfter', 30)
-            )
-        
-        # Reconstruct table style
-        if 'table_style' in serialized_config:
-            from reportlab.platypus import TableStyle
-            try:
-                # Convert serialized commands back to TableStyle format
-                commands = []
-                for cmd in serialized_config['table_style']:
-                    # Convert command back to proper format
-                    command_name = cmd[0]
-                    start_pos = tuple(cmd[1]) if isinstance(cmd[1], list) else cmd[1]
-                    end_pos = tuple(cmd[2]) if isinstance(cmd[2], list) else cmd[2]
-                    
-                    # Handle color values
-                    value = cmd[3]
-                    if isinstance(value, str) and value.startswith('#'):
-                        value = HexColor(value)
-                    elif isinstance(value, (int, float)):
-                        value = float(value)  # Convert to float for consistency
-                    
-                    commands.append((command_name, start_pos, end_pos, value))
-                
-                format_config['table_style'] = TableStyle(commands)
-            except Exception as e:
-                print(f"Error reconstructing table style: {str(e)}")
-                # Use a default table style if reconstruction fails
-                format_config['table_style'] = TableStyle([
-                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (0, 0), (-1, 0), 10),
-                    ('GRID', (0, 0), (-1, -1), 1, colors.gray)
-                ])
-        
-        return format_config
-
-    def schedule_report(self, dataset_name: str, email_config: dict, schedule_config: dict, format_config: dict = None, existing_job_id: str = None) -> str:
-        """Schedule a report based on configuration"""
-        try:
-            # Input validation with detailed error messages
-            if not dataset_name:
-                print("Error: dataset_name is required")
-                return None
-            if not email_config:
-                print("Error: email_config is required")
-                return None
-            if not schedule_config:
-                print("Error: schedule_config is required")
-                return None
-            
-            # Validate email configuration
-            if not email_config.get('recipients'):
-                print("Error: email_config must include at least one recipient")
-                return None
-            
-            # Get timezone from config or default to UTC
-            timezone_str = schedule_config.get('timezone', 'UTC')
-            try:
-                timezone = pytz.timezone(timezone_str)
-            except pytz.exceptions.UnknownTimeZoneError:
-                print(f"Warning: Invalid timezone {timezone_str}, falling back to UTC")
-                timezone = pytz.UTC
-                timezone_str = 'UTC'
-            
-            # Generate job_id if not provided
-            job_id = existing_job_id or str(uuid.uuid4())
-            
-            # Create the job based on schedule type
-            try:
-                schedule_type = schedule_config.get('type')
-                if not schedule_type:
-                    print("Error: schedule_type is required in schedule_config")
-                    return None
-                
-                print(f"Creating {schedule_type} schedule for dataset: {dataset_name}")
-                
-                hour = schedule_config.get('hour', 0)
-                minute = schedule_config.get('minute', 0)
-                
-                if schedule_type == 'one-time':
-                    if 'date' not in schedule_config:
-                        print("Error: date is required for one-time schedule")
-                        return None
-                    
-                    # Parse date and time in the specified timezone
-                    dt_str = f"{schedule_config['date']} {hour:02d}:{minute:02d}:00"
-                    try:
-                        local_dt = timezone.localize(datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S"))
-                    except ValueError as e:
-                        print(f"Error parsing date/time: {str(e)}")
-                        return None
-                    
-                    print(f"Scheduling one-time job for: {local_dt}")
-                    
-                    # Add job to scheduler
-                    self.scheduler.add_job(
-                        func=self.send_report,
-                        trigger='date',
-                        run_date=local_dt,
-                        args=[dataset_name, email_config, format_config],
-                        id=job_id,
-                        name=f"Report_{dataset_name}",
-                        replace_existing=True,
-                        timezone=timezone
-                    )
-                
-                elif schedule_type == 'daily':
-                    print(f"Scheduling daily job at {hour:02d}:{minute:02d}")
-                    self.scheduler.add_job(
-                        func=self.send_report,
-                        trigger='cron',
-                        hour=hour,
-                        minute=minute,
-                        args=[dataset_name, email_config, format_config],
-                        id=job_id,
-                        name=f"Report_{dataset_name}",
-                        replace_existing=True,
-                        timezone=timezone
-                    )
-                
-                elif schedule_type == 'weekly':
-                    days = schedule_config.get('days', [])
-                    if not days:
-                        print("Error: days list is required for weekly schedule")
-                        return None
-                    
-                    print(f"Scheduling weekly job for days {days} at {hour:02d}:{minute:02d}")
-                    self.scheduler.add_job(
-                        func=self.send_report,
-                        trigger='cron',
-                        day_of_week=','.join(str(day) for day in days),
-                        hour=hour,
-                        minute=minute,
-                        args=[dataset_name, email_config, format_config],
-                        id=job_id,
-                        name=f"Report_{dataset_name}",
-                        replace_existing=True,
-                        timezone=timezone
-                    )
-                
-                elif schedule_type == 'monthly':
-                    day_option = schedule_config.get('day_option', 'Specific Day')
-                    day = schedule_config.get('day', 1)
-                    
-                    if day_option == 'Specific Day' and not day:
-                        print("Error: day is required for monthly schedule with Specific Day option")
-                        return None
-                    
-                    if day_option == 'Last Day':
-                        day = 'last'
-                    elif day_option == 'First Weekday':
-                        day = '1st mon'
-                    elif day_option == 'Last Weekday':
-                        day = 'last mon'
-                    
-                    print(f"Scheduling monthly job for {day_option} (day: {day}) at {hour:02d}:{minute:02d}")
-                    self.scheduler.add_job(
-                        func=self.send_report,
-                        trigger='cron',
-                        day=day,
-                        hour=hour,
-                        minute=minute,
-                        args=[dataset_name, email_config, format_config],
-                        id=job_id,
-                        name=f"Report_{dataset_name}",
-                        replace_existing=True,
-                        timezone=timezone
-                    )
-                
-                else:
-                    print(f"Error: Invalid schedule type: {schedule_type}")
-                    return None
-                
-                # Save schedule to database
-                try:
-                    with sqlite3.connect(self.db_path) as conn:
-                        cursor = conn.cursor()
-                        
-                        # Get next run time in the specified timezone
-                        job = self.scheduler.get_job(job_id)
-                        if not job:
-                            print("Error: Failed to retrieve scheduled job")
-                            return None
-                            
-                        next_run = job.next_run_time.astimezone(timezone).isoformat() if job.next_run_time else None
-                        
-                        # Serialize format_config properly
-                        serializable_format_config = self._serialize_format_config(format_config)
-                        
-                        cursor.execute("""
-                            INSERT OR REPLACE INTO schedules (
-                                id, dataset_name, schedule_type, schedule_config, email_config, 
-                                format_config, timezone, created_at, next_run, status
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (
-                            job_id,
-                            dataset_name,
-                            schedule_type,
-                            json.dumps(schedule_config),
-                            json.dumps(email_config),
-                            json.dumps(serializable_format_config) if serializable_format_config else None,
-                            timezone_str,
-                            datetime.now(timezone).isoformat(),
-                            next_run,
-                            'active'
-                        ))
-                        conn.commit()
-                except Exception as db_error:
-                    print(f"Error saving schedule to database: {str(db_error)}")
-                    if self.scheduler.get_job(job_id):
-                        self.scheduler.remove_job(job_id)
-                    return None
-                
-                print(f"Successfully scheduled report with ID: {job_id}")
-                print(f"Next run time (in {timezone_str}): {next_run}")
-                return job_id
-                
-            except Exception as scheduler_error:
-                print(f"Error creating schedule: {str(scheduler_error)}")
-                # Clean up if job was partially created
-                if self.scheduler.get_job(job_id):
-                    self.scheduler.remove_job(job_id)
-                return None
-                
-        except Exception as e:
-            print(f"Error scheduling report: {str(e)}")
-            return None
+            return False
 
     def verify_whatsapp_number(self, to_number: str) -> bool:
         """Verify if a WhatsApp number is valid and opted-in"""
@@ -762,270 +614,12 @@ class ReportManager:
             elif "not currently opted in" in str(e):
                 print("Recipient needs to opt in to receive messages")
             return False
-
-    def send_report(self, dataset_name: str, email_config: dict, format_config: dict = None):
-        """Send scheduled report"""
-        try:
-            print(f"\nStarting to send report for dataset: {dataset_name}")
-            print(f"Email config: {email_config}")
-            print(f"Format config: {format_config}")
-            
-            # Deserialize format_config if it's a string
-            if isinstance(format_config, str):
-                try:
-                    format_config = json.loads(format_config)
-                except Exception as format_error:
-                    print(f"Error parsing format_config: {str(format_error)}")
-                    format_config = None
-            
-            # Try to refresh dataset from Tableau if connection details are available
-            try:
-                # Get Tableau connection details from the database
-                with sqlite3.connect('data/tableau_data.db') as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("""
-                        SELECT server_url, auth_method, credentials, site_name, workbook_name, view_ids, view_names
-                        FROM _internal_tableau_connections 
-                        WHERE dataset_name = ?
-                    """, (dataset_name,))
-                    connection_details = cursor.fetchone()
-                    
-                if connection_details:
-                    try:
-                        server_url, auth_method, credentials_json, site_name, workbook_name, view_ids_json, view_names_json = connection_details
-                        credentials = json.loads(credentials_json)
-                        view_ids = json.loads(view_ids_json)
-                        view_names = json.loads(view_names_json)
-                        
-                        # Authenticate with Tableau
-                        server = authenticate(server_url, auth_method, credentials, site_name)
-                        
-                        # Download fresh data
-                        if download_and_save_data(server, view_ids, workbook_name, view_names, dataset_name):
-                            print("Successfully refreshed dataset from Tableau")
-                        else:
-                            print("Failed to refresh dataset, will use saved data")
-                    except Exception as auth_error:
-                        print(f"Could not authenticate with Tableau: {str(auth_error)}")
-                        print("Will proceed with saved dataset")
-                else:
-                    print("No Tableau connection details found, will use saved dataset")
-            except Exception as db_error:
-                print(f"Database error checking connection details: {str(db_error)}")
-                print("Will proceed with saved dataset")
-            
-            # Use class-level email settings if not provided in email_config
-            email_config = email_config.copy()  # Create a copy to avoid modifying the original
-            email_config.setdefault('smtp_server', self.smtp_server)
-            email_config.setdefault('smtp_port', self.smtp_port)
-            email_config.setdefault('sender_email', self.sender_email)
-            email_config.setdefault('sender_password', self.sender_password)
-            
-            # Validate email configuration
-            required_email_fields = ['smtp_server', 'smtp_port', 'sender_email', 'sender_password', 'recipients']
-            missing_fields = [field for field in required_email_fields if not email_config.get(field)]
-            if missing_fields:
-                raise ValueError(f"Missing required email configuration fields: {', '.join(missing_fields)}")
-            
-            # Load dataset
-            try:
-                with sqlite3.connect('data/tableau_data.db') as conn:
-                    print("Loading dataset from database...")
-                    df = pd.read_sql_query(f"SELECT * FROM '{dataset_name}'", conn)
-                    print(f"Loaded {len(df)} rows from dataset")
-                
-                if df.empty:
-                    raise ValueError(f"No data found in dataset: {dataset_name}")
-            except Exception as load_error:
-                raise Exception(f"Failed to load dataset: {str(load_error)}")
-            
-            # Get the message body or use default
-            message_body = email_config.get('body', '').strip()
-            if not message_body:
-                message_body = f"Please find attached the scheduled report for dataset: {dataset_name}"
-            
-            print("Generating report...")
-            # Generate report with formatting settings
-            if format_config:
-                from report_formatter_new import ReportFormatter
-                formatter = ReportFormatter()
-                
-                # Apply saved formatting settings
-                if isinstance(format_config, dict):
-                    if format_config.get('page_size'):
-                        formatter.page_size = format_config['page_size']
-                    if format_config.get('orientation'):
-                        formatter.orientation = format_config['orientation']
-                    if format_config.get('margins'):
-                        formatter.margins = format_config['margins']
-                    
-                    # Handle title style
-                    if format_config.get('title_style'):
-                        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-                        from reportlab.lib.colors import HexColor
-                        from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
-                        
-                        styles = getSampleStyleSheet()
-                        title_style_data = format_config['title_style']
-                        
-                        if isinstance(title_style_data, dict):
-                            # Create new ParagraphStyle
-                            formatter.title_style = ParagraphStyle(
-                                'CustomTitle',
-                                parent=styles['Title'],
-                                fontName=title_style_data.get('fontName', 'Helvetica'),
-                                fontSize=title_style_data.get('fontSize', 24),
-                                alignment=title_style_data.get('alignment', TA_CENTER),
-                                textColor=HexColor(title_style_data.get('textColor', '#000000')),
-                                spaceAfter=title_style_data.get('spaceAfter', 30)
-                            )
-                    
-                    # Handle table style
-                    if format_config.get('table_style'):
-                        from reportlab.platypus import TableStyle
-                        table_style_data = format_config['table_style']
-                        
-                        if isinstance(table_style_data, list):
-                            # Convert commands to TableStyle
-                            commands = []
-                            for cmd in table_style_data:
-                                if isinstance(cmd, list) and len(cmd) == 4:
-                                    command_name = cmd[0]
-                                    start_pos = tuple(cmd[1]) if isinstance(cmd[1], list) else cmd[1]
-                                    end_pos = tuple(cmd[2]) if isinstance(cmd[2], list) else cmd[2]
-                                    value = cmd[3]
-                                    
-                                    # Handle color values
-                                    if isinstance(value, str) and value.startswith('#'):
-                                        value = HexColor(value)
-                                    elif isinstance(value, (int, float)):
-                                        value = float(value)
-                                    
-                                    commands.append((command_name, start_pos, end_pos, value))
-                            
-                            formatter.table_style = TableStyle(commands)
-                    
-                    if format_config.get('chart_size'):
-                        formatter.chart_size = format_config['chart_size']
-                    
-                    # Get selected columns and other content settings
-                    selected_columns = format_config.get('selected_columns', df.columns.tolist())
-                    df_selected = df[selected_columns]
-                    
-                    # Generate formatted report
-                    report_title = format_config.get('report_title', f"Report: {dataset_name}")
-                    pdf_buffer = formatter.generate_report(
-                        df_selected,
-                        include_row_count=format_config.get('include_row_count', True),
-                        include_totals=format_config.get('include_totals', True),
-                        include_averages=format_config.get('include_averages', True),
-                        report_title=report_title
-                    )
-                else:
-                    print("Format config is not a dictionary, using default formatting...")
-                    pdf_buffer = self.generate_pdf(df, f"Report: {dataset_name}")
-            else:
-                # Use default formatting if no format_config provided
-                print("Using default formatting...")
-                pdf_buffer = self.generate_pdf(df, f"Report: {dataset_name}")
-            
-            # Save report
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            content_hash = hashlib.sha256(pdf_buffer.getvalue()).hexdigest()
-            filename = f"{content_hash}_{timestamp}.pdf"
-            file_path = self.public_reports_dir / filename
-            
-            with open(file_path, 'wb') as f:
-                f.write(pdf_buffer.getvalue())
-            print(f"Report saved to: {file_path}")
-            
-            # Generate shareable link
-            share_link = self.get_report_url(file_path)
-            if not share_link:
-                print("Warning: Failed to generate shareable link")
-                share_link = f"File: {file_path.name}"
-            
-            print("Preparing email...")
-            # Create email
-            msg = MIMEMultipart()
-            msg['From'] = email_config['sender_email']
-            msg['To'] = ', '.join(email_config['recipients'])
-            msg['Subject'] = f"Scheduled Report: {dataset_name}"
-            
-            # Format email body with custom message, report details, and link
-            email_body = f"""{message_body}
-
-Report Details:
-- Dataset: {dataset_name}
-- Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-View and download your report here:
-{share_link}
-
-(Link expires in 24 hours)
-
-This is an automated report. Please do not reply to this email."""
-
-            msg.attach(MIMEText(email_body, 'plain'))
-            
-            # Attach report file
-            print("Attaching report file...")
-            with open(file_path, 'rb') as f:
-                attachment = MIMEApplication(f.read(), _subtype='pdf')
-                attachment.add_header('Content-Disposition', 'attachment', filename=file_path.name)
-                msg.attach(attachment)
-            
-            # Send email with proper SMTP connection handling
-            print(f"Sending email to: {email_config['recipients']}")
-            try:
-                with smtplib.SMTP(email_config['smtp_server'], email_config['smtp_port']) as server:
-                    server.starttls()
-                    print("Logging in to SMTP server...")
-                    server.login(email_config['sender_email'], email_config['sender_password'])
-                    print("Sending email...")
-                    server.send_message(msg)
-                    print("Email sent successfully!")
-            except smtplib.SMTPAuthenticationError:
-                raise Exception("Failed to authenticate with SMTP server. Please check your email credentials.")
-            except smtplib.SMTPException as smtp_error:
-                raise Exception(f"SMTP error: {str(smtp_error)}")
-            
-            # Send WhatsApp message if configured
-            if self.twilio_client and email_config.get('whatsapp_recipients'):
-                print("Sending WhatsApp notifications...")
-                # Format WhatsApp message with custom message, report details, and link
-                whatsapp_body = f"""📊 *Scheduled Report: {dataset_name}*
-
-{message_body}
-
-*Report Details:*
-- Dataset: {dataset_name}
-- Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-🔗 *View and Download Report:*
-{share_link}
-
-_(Link expires in 24 hours)_"""
-                
-                for recipient in email_config['whatsapp_recipients']:
-                    print(f"Sending WhatsApp message to: {recipient}")
-                    if self.send_whatsapp_message(recipient, whatsapp_body):
-                        print(f"WhatsApp notification sent to {recipient}")
-                    else:
-                        print(f"WhatsApp notification failed for {recipient}. Please check if the number is opted in.")
-            
-            print(f"Report sent successfully for dataset: {dataset_name}")
-            
-        except Exception as e:
-            error_msg = f"Failed to send report: {str(e)}"
-            print(error_msg)
-            print(f"Error type: {type(e)}")
-            print(f"Error details: {e.__dict__ if hasattr(e, '__dict__') else 'No details'}")
-            raise Exception(error_msg) from e
     
     def remove_schedule(self, job_id: str) -> bool:
         """Remove a scheduled report"""
         try:
+            print(f"Removing schedule {job_id}")
+            
             # Remove from scheduler if job exists
             try:
                 if self.scheduler.get_job(job_id):
@@ -1044,14 +638,15 @@ _(Link expires in 24 hours)_"""
                     # Update status to 'deleted' instead of actually deleting
                     cursor.execute("""
                         UPDATE schedules 
-                        SET status = 'deleted' 
+                        SET status = 'deleted',
+                            next_run = NULL
                         WHERE id = ?
                     """, (job_id,))
                     conn.commit()
                     print(f"Successfully removed schedule {job_id} from database")
                     return True
                 else:
-                    print(f"Schedule {job_id} not found in database")
+                    print(f"Schedule {job_id} not found in database or already deleted")
                     return False
                 
         except Exception as e:
@@ -1275,12 +870,29 @@ _(Link expires in 24 hours)_"""
                         
                         # Get job from scheduler
                         job = self.scheduler.get_job(job_id)
-                        if job and job.next_run_time:
-                            # Convert next run time to local timezone
-                            next_run = job.next_run_time.astimezone(timezone)
-                            next_run_str = next_run.isoformat()
-                        
                         schedule_config = json.loads(schedule_config_str)
+                        
+                        # Handle next run time based on schedule type
+                        if schedule_type == 'one-time':
+                            # For one-time schedules, use the scheduled date/time
+                            try:
+                                date_str = schedule_config.get('date')
+                                hour = int(schedule_config.get('hour', 0))
+                                minute = int(schedule_config.get('minute', 0))
+                                dt_str = f"{date_str} {hour:02d}:{minute:02d}:00"
+                                next_run = timezone.localize(datetime.strptime(dt_str, '%Y-%m-%d %H:%M:%S'))
+                                next_run_str = next_run.isoformat()
+                            except Exception as e:
+                                print(f"Error parsing one-time schedule date: {str(e)}")
+                                next_run_str = None
+                        else:
+                            # For recurring schedules, get next run time from the scheduler
+                            if job and job.next_run_time:
+                                next_run = job.next_run_time.astimezone(timezone)
+                                next_run_str = next_run.isoformat()
+                            else:
+                                next_run_str = None
+                        
                         email_config = json.loads(email_config_str)
                         format_config = json.loads(format_config_str) if format_config_str else None
                         
@@ -1302,4 +914,816 @@ _(Link expires in 24 hours)_"""
             print(f"Error getting active schedules: {str(e)}")
             return {}
 
-        return schedules 
+        return schedules
+
+    def get_next_run_time(self, schedule_id: str) -> str:
+        """Get the next run time for a schedule"""
+        try:
+            # Get schedule from database
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT schedule_type, schedule_config, timezone
+                    FROM schedules 
+                    WHERE id = ? AND status = 'active'
+                """, (schedule_id,))
+                row = cursor.fetchone()
+                
+                if not row:
+                    return "Schedule not found"
+                
+                schedule_type, schedule_config_str, timezone_str = row
+                schedule_config = json.loads(schedule_config_str)
+                
+                try:
+                    timezone = pytz.timezone(timezone_str or 'UTC')
+                except pytz.exceptions.UnknownTimeZoneError:
+                    timezone = pytz.UTC
+                
+                # Handle one-time schedules
+                if schedule_type == 'one-time':
+                    try:
+                        date_str = schedule_config.get('date')
+                        hour = int(schedule_config.get('hour', 0))
+                        minute = int(schedule_config.get('minute', 0))
+                        dt_str = f"{date_str} {hour:02d}:{minute:02d}:00"
+                        next_run = timezone.localize(datetime.strptime(dt_str, '%Y-%m-%d %H:%M:%S'))
+                        return next_run.strftime('%Y-%m-%d %H:%M:%S %Z')
+                    except Exception as e:
+                        print(f"Error parsing one-time schedule date: {str(e)}")
+                        return "Invalid schedule date"
+                
+                # For recurring schedules, get from scheduler
+                job = self.scheduler.get_job(schedule_id)
+                if job and job.next_run_time:
+                    next_run = job.next_run_time.astimezone(timezone)
+                    return next_run.strftime('%Y-%m-%d %H:%M:%S %Z')
+                
+                return "Not scheduled"
+                
+        except Exception as e:
+            print(f"Error getting next run time: {str(e)}")
+            return "Error getting next run time"
+
+    def get_schedules(self) -> list:
+        """Retrieve all schedules from the database."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id, dataset_name, schedule_type, schedule_config, email_config, 
+                           format_config, timezone, next_run, status
+                    FROM schedules 
+                    WHERE status = 'active'
+                """)
+                rows = cursor.fetchall()
+                
+                schedules = []
+                for row in rows:
+                    schedule = {
+                        'id': row[0],
+                        'dataset_name': row[1],
+                        'schedule_type': row[2],
+                        'schedule_config': json.loads(row[3]),
+                        'email_config': json.loads(row[4]),
+                        'format_config': json.loads(row[5]) if row[5] else {},
+                        'timezone': row[6],
+                        'next_run': row[7],
+                        'status': row[8]
+                    }
+                    
+                    # Add schedule-specific fields based on type
+                    if schedule['schedule_type'] == 'weekly':
+                        schedule['days'] = schedule['schedule_config'].get('days', [])
+                    elif schedule['schedule_type'] == 'monthly':
+                        schedule['day_option'] = schedule['schedule_config'].get('day_option')
+                        schedule['day'] = schedule['schedule_config'].get('day')
+                    
+                    # Add common time fields
+                    schedule['hour'] = schedule['schedule_config'].get('hour', 0)
+                    schedule['minute'] = schedule['schedule_config'].get('minute', 0)
+                    
+                    schedules.append(schedule)
+            
+            return schedules
+            
+        except Exception as e:
+            print(f"Error retrieving schedules: {str(e)}")
+            return [] 
+
+    def get_schedule(self, schedule_id: str) -> dict:
+        """Get a single schedule by ID"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT dataset_name, schedule_type, schedule_config, email_config, 
+                           format_config, timezone, next_run, status
+                    FROM schedules 
+                    WHERE id = ? AND status != 'deleted'
+                """, (schedule_id,))
+                row = cursor.fetchone()
+                
+                if not row:
+                    print(f"Schedule {schedule_id} not found")
+                    return None
+                    
+                schedule = {
+                    'id': schedule_id,
+                    'dataset_name': row[0],
+                    'schedule_type': row[1],
+                    'schedule_config': json.loads(row[2]),
+                    'email_config': json.loads(row[3]),
+                    'format_config': json.loads(row[4]) if row[4] else {},
+                    'timezone': row[5],
+                    'next_run': row[6],
+                    'status': row[7]
+                }
+                
+                # Add schedule-specific fields based on type
+                if schedule['schedule_type'] == 'weekly':
+                    schedule['days'] = schedule['schedule_config'].get('days', [])
+                elif schedule['schedule_type'] == 'monthly':
+                    schedule['day_option'] = schedule['schedule_config'].get('day_option')
+                    schedule['day'] = schedule['schedule_config'].get('day')
+                
+                # Add common time fields
+                schedule['hour'] = schedule['schedule_config'].get('hour', 0)
+                schedule['minute'] = schedule['schedule_config'].get('minute', 0)
+                
+                return schedule
+                
+        except Exception as e:
+            print(f"Error getting schedule {schedule_id}: {str(e)}")
+            return None
+
+    def run_schedule_now(self, schedule_id: str) -> bool:
+        """Run a schedule immediately"""
+        try:
+            print(f"Running schedule {schedule_id}")
+            
+            # Get the schedule details
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT dataset_name, email_config, format_config 
+                    FROM schedules 
+                    WHERE id = ? AND status = 'active'
+                """, (schedule_id,))
+                row = cursor.fetchone()
+                
+                if not row:
+                    print(f"Schedule {schedule_id} not found or not active")
+                    return False
+                
+                dataset_name, email_config_str, format_config_str = row
+                
+                try:
+                    email_config = json.loads(email_config_str)
+                    format_config = json.loads(format_config_str) if format_config_str else None
+                except json.JSONDecodeError as e:
+                    print(f"Error decoding configuration: {str(e)}")
+                    return False
+            
+            # Add email settings from environment if not present
+            email_config.setdefault('smtp_server', self.smtp_server)
+            email_config.setdefault('smtp_port', int(self.smtp_port))
+            email_config.setdefault('sender_email', self.sender_email)
+            email_config.setdefault('sender_password', self.sender_password)
+            
+            print("\nEmail configuration:")
+            print(f"SMTP Server: {email_config.get('smtp_server')}")
+            print(f"SMTP Port: {email_config.get('smtp_port')}")
+            print(f"Sender Email: {email_config.get('sender_email')}")
+            print(f"Password Set: {'Yes' if email_config.get('sender_password') else 'No'}")
+            print(f"Recipients: {email_config.get('recipients')}\n")
+            
+            # Run the report generation and sending
+            try:
+                success = self.send_report(dataset_name, email_config, format_config)
+                
+                if success:
+                    # Update last_run time in database
+                    with sqlite3.connect(self.db_path) as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            UPDATE schedules 
+                            SET last_run = ? 
+                            WHERE id = ?
+                        """, (datetime.now().isoformat(), schedule_id))
+                        conn.commit()
+                    
+                    print(f"Successfully ran schedule {schedule_id}")
+                    return True
+                else:
+                    print(f"Failed to send report for schedule {schedule_id}")
+                    return False
+                
+            except Exception as run_error:
+                print(f"Error running schedule {schedule_id}: {str(run_error)}")
+                
+                # Log the error in schedule_runs table
+                try:
+                    with sqlite3.connect(self.db_path) as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            INSERT INTO schedule_runs (schedule_id, status, error_message)
+                            VALUES (?, 'error', ?)
+                        """, (schedule_id, str(run_error)))
+                        conn.commit()
+                except Exception as log_error:
+                    print(f"Error logging run error: {str(log_error)}")
+                
+                return False
+                
+        except Exception as e:
+            print(f"Error in run_schedule_now: {str(e)}")
+            return False
+
+    def update_schedule(self, schedule_id: str, schedule_config: dict, email_config: dict, format_config: dict = None) -> bool:
+        """Update an existing schedule with new configuration"""
+        try:
+            # Get the existing schedule
+            existing_schedule = self.get_schedule(schedule_id)
+            if not existing_schedule:
+                print(f"Schedule {schedule_id} not found")
+                return False
+
+            # Get dataset name from existing schedule
+            dataset_name = existing_schedule['dataset_name']
+
+            # Remove the old job from the scheduler
+            if self.scheduler.get_job(schedule_id):
+                self.scheduler.remove_job(schedule_id)
+                print(f"Removed old schedule from scheduler: {schedule_id}")
+
+            # Schedule new job with updated configuration
+            job_id = self.schedule_report(
+                dataset_name=dataset_name,
+                schedule_config=schedule_config,
+                email_config=email_config,
+                format_config=format_config,
+                existing_job_id=schedule_id
+            )
+
+            if not job_id:
+                print("Failed to update schedule")
+                return False
+
+            print(f"Successfully updated schedule {schedule_id}")
+            return True
+
+        except Exception as e:
+            print(f"Error updating schedule: {str(e)}")
+            return False 
+
+    def save_settings(self, settings: dict) -> bool:
+        """Save system settings to the database"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Create settings table if it doesn't exist
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS system_settings (
+                        key TEXT PRIMARY KEY,
+                        value TEXT NOT NULL,
+                        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                # Begin transaction
+                cursor.execute("BEGIN TRANSACTION")
+                
+                try:
+                    # Save each setting
+                    for key, value in settings.items():
+                        # Convert value to JSON string if it's not a string
+                        if not isinstance(value, str):
+                            value = json.dumps(value)
+                            
+                        cursor.execute("""
+                            INSERT OR REPLACE INTO system_settings (key, value, updated_at)
+                            VALUES (?, ?, ?)
+                        """, (key, value, datetime.now().isoformat()))
+                    
+                    # Update instance variables for email settings
+                    if 'smtp_server' in settings:
+                        self.smtp_server = settings['smtp_server']
+                    if 'smtp_port' in settings:
+                        self.smtp_port = str(settings['smtp_port'])
+                    if 'sender_email' in settings:
+                        self.sender_email = settings['sender_email']
+                    if 'sender_password' in settings:
+                        self.sender_password = settings['sender_password']
+                    
+                    # Commit transaction
+                    conn.commit()
+                    print("Settings saved successfully")
+                    return True
+                    
+                except Exception as e:
+                    conn.rollback()
+                    print(f"Error saving settings: {str(e)}")
+                    return False
+                    
+        except Exception as e:
+            print(f"Database error while saving settings: {str(e)}")
+            return False
+
+    def get_settings(self) -> dict:
+        """Get system settings from the database"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Create settings table if it doesn't exist
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS system_settings (
+                        key TEXT PRIMARY KEY,
+                        value TEXT NOT NULL,
+                        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                # Get all settings
+                cursor.execute("SELECT key, value FROM system_settings")
+                settings = dict(cursor.fetchall())
+                
+                # Try to parse JSON values
+                for key, value in settings.items():
+                    try:
+                        settings[key] = json.loads(value)
+                    except (json.JSONDecodeError, TypeError):
+                        # Keep as string if not valid JSON
+                        pass
+                
+                return settings
+                
+        except Exception as e:
+            print(f"Error getting settings: {str(e)}")
+            return {} 
+
+    def pause_schedule(self, schedule_id: str) -> bool:
+        """Pause a schedule"""
+        try:
+            # Get the schedule
+            schedule = self.get_schedule(schedule_id)
+            if not schedule:
+                print(f"Schedule {schedule_id} not found")
+                return False
+
+            # Pause the job in the scheduler
+            if self.scheduler.get_job(schedule_id):
+                self.scheduler.pause_job(schedule_id)
+                print(f"Paused job {schedule_id} in scheduler")
+
+            # Update status in database
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE schedules 
+                    SET status = 'paused'
+                    WHERE id = ?
+                """, (schedule_id,))
+                conn.commit()
+                print(f"Updated schedule {schedule_id} status to paused")
+                return True
+
+        except Exception as e:
+            print(f"Error pausing schedule: {str(e)}")
+            return False
+
+    def resume_schedule(self, schedule_id: str) -> bool:
+        """Resume a paused schedule"""
+        try:
+            # Get the schedule
+            schedule = self.get_schedule(schedule_id)
+            if not schedule:
+                print(f"Schedule {schedule_id} not found")
+                return False
+
+            # Resume the job in the scheduler
+            if self.scheduler.get_job(schedule_id):
+                self.scheduler.resume_job(schedule_id)
+                print(f"Resumed job {schedule_id} in scheduler")
+
+            # Update status in database
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE schedules 
+                    SET status = 'active'
+                    WHERE id = ?
+                """, (schedule_id,))
+                conn.commit()
+                print(f"Updated schedule {schedule_id} status to active")
+                return True
+
+        except Exception as e:
+            print(f"Error resuming schedule: {str(e)}")
+            return False 
+
+    def schedule_report(self, dataset_name: str, email_config: dict, schedule_config: dict, format_config: dict = None) -> str:
+        """Schedule a report to be sent at specified times"""
+        try:
+            print(f"Scheduling report for dataset: {dataset_name}")
+            print(f"Schedule config received: {schedule_config}")
+            
+            # Create a complete email config with environment variables as defaults
+            complete_email_config = {
+                'smtp_server': self.smtp_server,
+                'smtp_port': int(self.smtp_port),
+                'sender_email': self.sender_email,
+                'sender_password': self.sender_password,
+                **email_config  # This will override any duplicate keys from email_config
+            }
+            
+            # Ensure we have required email fields
+            required_email_fields = ['smtp_server', 'smtp_port', 'sender_email', 'sender_password', 'recipients']
+            missing_fields = [field for field in required_email_fields if not complete_email_config.get(field)]
+            if missing_fields:
+                raise ValueError(f"Missing required email configuration fields: {', '.join(missing_fields)}")
+            
+            # Generate a unique job ID
+            job_id = str(uuid.uuid4())
+            print(f"Generated job ID: {job_id}")
+            
+            # Get schedule type
+            schedule_type = schedule_config.get('type', '').lower()
+            if not schedule_type:
+                raise ValueError("Schedule type is required")
+                
+            print(f"Schedule type: {schedule_type}")
+            
+            # Store timezone if provided
+            timezone = schedule_config.get('timezone', 'UTC')
+            try:
+                tz = pytz.timezone(timezone)
+                print(f"Using timezone: {timezone}")
+            except:
+                print(f"Invalid timezone: {timezone}, using UTC")
+                timezone = 'UTC'
+                tz = pytz.UTC
+            
+            # Schedule based on type
+            if schedule_type == 'one-time':
+                # One-time schedule - our existing code works fine here
+                date_str = schedule_config.get('date')
+                
+                # Check for time in different formats
+                time_str = schedule_config.get('time')
+                
+                # If time is not provided, try time_str or construct from hour/minute
+                if not time_str:
+                    time_str = schedule_config.get('time_str')
+                    if time_str and ' (' in time_str:
+                        # Extract the time part if it includes timezone info like '08:50 (Asia/Kolkata)'
+                        time_str = time_str.split(' (')[0]
+                
+                # If still no time_str, construct it from hour and minute
+                if not time_str and 'hour' in schedule_config and 'minute' in schedule_config:
+                    hour = int(schedule_config.get('hour', 0))
+                    minute = int(schedule_config.get('minute', 0))
+                    time_str = f"{hour:02d}:{minute:02d}"
+                
+                print(f"Date: {date_str}, Time: {time_str}")
+                
+                if not date_str or not time_str:
+                    raise ValueError("Date and time are required for one-time schedule")
+                
+                # Parse the date and time
+                try:
+                    date_parts = date_str.split('-')
+                    time_parts = time_str.split(':')
+                    
+                    year = int(date_parts[0])
+                    month = int(date_parts[1])
+                    day = int(date_parts[2])
+                    
+                    hour = int(time_parts[0])
+                    minute = int(time_parts[1])
+                    
+                    # Create a timezone-aware datetime
+                    run_time = tz.localize(datetime(year, month, day, hour, minute))
+                    print(f"Scheduling one-time job for: {run_time.isoformat()}")
+                    
+                    # Convert to UTC for the scheduler
+                    utc_time = run_time.astimezone(pytz.UTC)
+                    
+                    # Add the job
+                    self.scheduler.add_job(
+                        func=self.send_report,
+                        trigger='date',
+                        run_date=utc_time,
+                        args=[dataset_name, complete_email_config, format_config],
+                        id=job_id,
+                        name=f"Report_{dataset_name}",
+                        replace_existing=True
+                    )
+                    
+                    # Store the original timezone information to display correctly in UI
+                    schedule_config['display_timezone'] = timezone
+                    schedule_config['original_time'] = run_time.isoformat()
+                    
+                except Exception as dt_error:
+                    raise ValueError(f"Invalid date or time format: {str(dt_error)}")
+            
+            elif schedule_type == 'daily':
+                # Daily schedule
+                print("Processing daily schedule...")
+                
+                # First try to get hour and minute from time_str if available
+                hour = None
+                minute = None
+                time_str = schedule_config.get('time_str') or schedule_config.get('time')
+                
+                if time_str:
+                    # Extract time from string like "08:30" or "08:30 (UTC)"
+                    if ' (' in time_str:
+                        time_str = time_str.split(' (')[0]
+                    try:
+                        time_parts = time_str.split(':')
+                        hour = int(time_parts[0])
+                        minute = int(time_parts[1])
+                    except (ValueError, IndexError) as e:
+                        print(f"Error parsing time string {time_str}: {e}")
+                
+                # If that fails, use hour and minute directly
+                if hour is None or minute is None:
+                    try:
+                        hour = int(schedule_config.get('hour', 0))
+                        minute = int(schedule_config.get('minute', 0))
+                    except (ValueError, TypeError) as e:
+                        raise ValueError(f"Invalid hour or minute values: {e}")
+                
+                print(f"Scheduling daily job at {hour:02d}:{minute:02d} {timezone}")
+                
+                # Store timezone information
+                schedule_config['display_timezone'] = timezone
+                
+                # Create the job
+                try:
+                    self.scheduler.add_job(
+                        func=self.send_report,
+                        trigger='cron',
+                        hour=hour,
+                        minute=minute,
+                        args=[dataset_name, complete_email_config, format_config],
+                        id=job_id,
+                        name=f"Report_{dataset_name}",
+                        replace_existing=True,
+                        timezone=tz
+                    )
+                    print(f"Daily schedule created with job ID: {job_id}")
+                except Exception as sched_error:
+                    raise ValueError(f"Error creating daily schedule: {str(sched_error)}")
+            
+            elif schedule_type == 'weekly':
+                # Weekly schedule
+                print("Processing weekly schedule...")
+                
+                # Get days from schedule config
+                days = schedule_config.get('days')
+                print(f"Days received: {days}")
+                
+                # Define a mapping from day names to day numbers (0-6, where 0=Monday for APScheduler)
+                day_name_to_number = {
+                    'monday': 0, 'mon': 0, 
+                    'tuesday': 1, 'tue': 1, 
+                    'wednesday': 2, 'wed': 2, 
+                    'thursday': 3, 'thu': 3, 
+                    'friday': 4, 'fri': 4, 
+                    'saturday': 5, 'sat': 5, 
+                    'sunday': 6, 'sun': 6
+                }
+                
+                # Convert days to integers based on name or index
+                day_integers = []
+                
+                # Handle days as string, list, or comma-separated values
+                if isinstance(days, str):
+                    if ',' in days:
+                        day_items = [d.strip().lower() for d in days.split(',') if d.strip()]
+                    else:
+                        day_items = [days.lower()]
+                elif isinstance(days, (list, tuple)):
+                    day_items = [str(d).lower() for d in days]
+                else:
+                    raise ValueError("Days must be provided as a list, comma-separated string, or single value")
+                
+                # Convert each day to its numerical value
+                for day in day_items:
+                    try:
+                        # Try parsing as a direct integer (0-6)
+                        day_int = int(day)
+                        if 0 <= day_int <= 6:
+                            day_integers.append(day_int)
+                        else:
+                            raise ValueError(f"Day number must be between 0 and 6, got {day_int}")
+                    except ValueError:
+                        # Try converting from day name to number
+                        if day in day_name_to_number:
+                            day_integers.append(day_name_to_number[day])
+                        else:
+                            raise ValueError(f"Invalid day name: {day}")
+                
+                if not day_integers:
+                    raise ValueError("At least one day must be selected for weekly schedule")
+                    
+                # Get hour and minute, similar to daily
+                hour = None
+                minute = None
+                time_str = schedule_config.get('time_str') or schedule_config.get('time')
+                
+                if time_str:
+                    if ' (' in time_str:
+                        time_str = time_str.split(' (')[0]
+                    try:
+                        time_parts = time_str.split(':')
+                        hour = int(time_parts[0])
+                        minute = int(time_parts[1])
+                    except (ValueError, IndexError) as e:
+                        print(f"Error parsing time string {time_str}: {e}")
+                
+                if hour is None or minute is None:
+                    try:
+                        hour = int(schedule_config.get('hour', 0))
+                        minute = int(schedule_config.get('minute', 0))
+                    except (ValueError, TypeError) as e:
+                        raise ValueError(f"Invalid hour or minute values: {e}")
+                
+                # Convert days to string format for cron (0=Monday in APScheduler)
+                day_str = ','.join(str(day) for day in day_integers)
+                print(f"Scheduling weekly job for days {day_str} at {hour:02d}:{minute:02d} {timezone}")
+                
+                # Store timezone information
+                schedule_config['display_timezone'] = timezone
+                
+                # Create the job
+                try:
+                    self.scheduler.add_job(
+                        func=self.send_report,
+                        trigger='cron',
+                        day_of_week=day_str,
+                        hour=hour,
+                        minute=minute,
+                        args=[dataset_name, complete_email_config, format_config],
+                        id=job_id,
+                        name=f"Report_{dataset_name}",
+                        replace_existing=True,
+                        timezone=tz
+                    )
+                    print(f"Weekly schedule created with job ID: {job_id}")
+                except Exception as sched_error:
+                    print(f"Error creating weekly schedule: {str(sched_error)}")
+                    print(f"Traceback: {traceback.format_exc()}")
+                    raise ValueError(f"Error creating weekly schedule: {str(sched_error)}")
+            
+            elif schedule_type == 'monthly':
+                # Monthly schedule
+                print("Processing monthly schedule...")
+                
+                # Get day of month
+                day_type = schedule_config.get('day_type', 'specific')
+                
+                # Handle different types of monthly schedules
+                if day_type == 'specific':
+                    try:
+                        day = int(schedule_config.get('day', 1))
+                        if day < 1 or day > 31:
+                            raise ValueError(f"Day must be between 1 and 31, got {day}")
+                        day_spec = str(day)
+                    except (ValueError, TypeError) as e:
+                        raise ValueError(f"Invalid day value: {e}")
+                elif day_type == 'last':
+                    day_spec = 'last'
+                elif day_type == 'first_weekday':
+                    day_spec = '1'  # We'll handle this special case later
+                elif day_type == 'last_weekday':
+                    day_spec = 'last'  # We'll handle this special case later
+                else:
+                    raise ValueError(f"Invalid day_type: {day_type}")
+                
+                # Get hour and minute, similar to daily
+                hour = None
+                minute = None
+                time_str = schedule_config.get('time_str') or schedule_config.get('time')
+                
+                if time_str:
+                    if ' (' in time_str:
+                        time_str = time_str.split(' (')[0]
+                    try:
+                        time_parts = time_str.split(':')
+                        hour = int(time_parts[0])
+                        minute = int(time_parts[1])
+                    except (ValueError, IndexError) as e:
+                        print(f"Error parsing time string {time_str}: {e}")
+                
+                if hour is None or minute is None:
+                    try:
+                        hour = int(schedule_config.get('hour', 0))
+                        minute = int(schedule_config.get('minute', 0))
+                    except (ValueError, TypeError) as e:
+                        raise ValueError(f"Invalid hour or minute values: {e}")
+                
+                print(f"Scheduling monthly job for day {day_spec} at {hour:02d}:{minute:02d} {timezone}")
+                
+                # Store timezone information
+                schedule_config['display_timezone'] = timezone
+                
+                # Create the job
+                try:
+                    self.scheduler.add_job(
+                        func=self.send_report,
+                        trigger='cron',
+                        day=day_spec,
+                        hour=hour,
+                        minute=minute,
+                        args=[dataset_name, complete_email_config, format_config],
+                        id=job_id,
+                        name=f"Report_{dataset_name}",
+                        replace_existing=True,
+                        timezone=tz
+                    )
+                    print(f"Monthly schedule created with job ID: {job_id}")
+                except Exception as sched_error:
+                    raise ValueError(f"Error creating monthly schedule: {str(sched_error)}")
+            
+            else:
+                # Invalid schedule type
+                raise ValueError(f"Invalid schedule type: {schedule_type}")
+            
+            # Save schedule to database
+            try:
+                with sqlite3.connect(self.db_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT INTO schedules (
+                            id, dataset_name, schedule_type, schedule_config, 
+                            email_config, format_config, created_at, status
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        job_id,
+                        dataset_name,
+                        schedule_type,
+                        json.dumps(schedule_config),
+                        json.dumps(complete_email_config),
+                        json.dumps(format_config) if format_config else None,
+                        datetime.now().isoformat(),
+                        'active'
+                    ))
+                    conn.commit()
+                    print(f"Schedule saved to database with ID: {job_id}")
+                    return job_id
+            except Exception as db_error:
+                print(f"Error saving schedule to database: {str(db_error)}")
+                if self.scheduler.get_job(job_id):
+                    self.scheduler.remove_job(job_id)
+                return None
+            
+        except Exception as e:
+            print(f"Error scheduling report: {str(e)}")
+            traceback.print_exc()  # Print the full traceback for debugging
+            return None
+
+    def get_report_url(self, report_path: Path) -> str:
+        """Generate a URL for a report file
+        
+        Args:
+            report_path: Path to the report file
+            
+        Returns:
+            str: URL to access the report
+        """
+        try:
+            # Generate the relative path
+            static_dir = Path('static')
+            if report_path.is_absolute():
+                # Try to make it relative to the static directory
+                try:
+                    relative_path = report_path.relative_to(static_dir)
+                    url_path = f"static/{relative_path}"
+                except ValueError:
+                    # If not in static directory, just use the filename
+                    url_path = f"static/reports/{report_path.name}"
+            else:
+                # Already relative
+                url_path = str(report_path)
+                
+            # Ensure base_url is set
+            if not hasattr(self, 'base_url') or not self.base_url:
+                self.base_url = os.getenv('BASE_URL', 'http://localhost:8501')
+                
+            # Create the full URL
+            if self.base_url.endswith('/'):
+                url = f"{self.base_url}{url_path}"
+            else:
+                url = f"{self.base_url}/{url_path}"
+                
+            print(f"Generated report URL: {url}")
+            return url
+            
+        except Exception as e:
+            print(f"Error generating report URL: {str(e)}")
+            return f"file://{report_path}" 
