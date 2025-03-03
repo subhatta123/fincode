@@ -17,18 +17,27 @@ services:
                 body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
                 h1 { color: #333; }
                 .status { padding: 15px; background-color: #f0f8ff; border-radius: 5px; }
+                .nav { margin-top: 20px; }
+                .nav a { display: inline-block; margin-right: 15px; padding: 8px 15px; background: #0d6efd; color: white; text-decoration: none; border-radius: 4px; }
             </style>
         </head>
         <body>
             <h1>Fincode API Server</h1>
             <div class="status">
                 <p>API server is running successfully.</p>
-                <p>This is a temporary frontend page. The actual frontend will be added in future deployments.</p>
+                <p>This is a temporary frontend page. Use the links below to access different parts of the application.</p>
+            </div>
+            <div class="nav">
+                <a href="/login">Login</a>
+                <a href="/register">Register</a>
             </div>
         </body>
         </html>
         EOL
       fi
+      # Ensure permissions are set correctly
+      chmod -R 755 frontend/build
+      ls -la frontend/build
     startCommand: gunicorn wsgi:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 180
     envVars:
       - key: PYTHON_VERSION
@@ -49,6 +58,12 @@ services:
         sync: false
       - key: BASE_URL
         sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: FLASK_APP
+        value: wsgi.py
+      - key: FLASK_ENV
+        value: production
       - key: RENDER
         value: true
       - key: RENDER_EXTERNAL_URL

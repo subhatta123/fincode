@@ -41,6 +41,9 @@ app = Flask(__name__,
            static_folder=static_folder,
            static_url_path='')
 
+# Set secret key for session management
+app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
+
 # Configure the application
 # app.config.from_object('config.Config')
 
@@ -48,10 +51,12 @@ app = Flask(__name__,
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-# Serve the frontend application
-@app.route('/', defaults={'path': ''})
+# DO NOT define a root route here - it's defined in app.py
+# This code is now used only for serving static files for paths that don't match any route
+
+# Serve frontend files for paths that don't match API routes
 @app.route('/<path:path>')
-def serve(path):
+def serve_frontend(path):
     logger.debug(f"Request for path: {path}")
     logger.debug(f"Static folder is: {app.static_folder}")
     
@@ -98,4 +103,4 @@ from app.routes.scheduler import scheduler_bp
 from app.routes.main import main_bp
 
 app.register_blueprint(scheduler_bp, url_prefix='/api')
-app.register_blueprint(main_bp)  # No prefix for the main blueprint 
+app.register_blueprint(main_bp, url_prefix='/main')  # Add a prefix for the main blueprint to avoid conflicts 

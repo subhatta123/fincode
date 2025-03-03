@@ -393,6 +393,9 @@ def register():
 @app.route('/')
 def home():
     if 'user' not in session:
+        # Check if this is an API request or a frontend request
+        if request.headers.get('Accept', '').startswith('application/json'):
+            return jsonify({"message": "Authentication required"}), 401
         return redirect(url_for('login'))
     
     user_role = session['user'].get('role')
@@ -1644,7 +1647,7 @@ def process_schedule_form():
         elif schedule_type == 'daily':
             # For daily schedules, we only need the time which is already handled above
             pass
-            
+        
         elif schedule_type == 'weekly':
             days = request.form.getlist('days')
             if not days:
@@ -1806,7 +1809,7 @@ def process_schedule_form():
                 format_config['max_rows'] = max_rows
             except ValueError:
                 format_config['max_rows'] = 1000
-        
+            
         # Schedule the report
         print("Scheduling report with config:")
         print(f"Dataset: {dataset_name}")
@@ -3588,7 +3591,7 @@ def schedule_dataset(dataset):
                                 </div>
                             </div>
                             
-                                <div class="mb-3">
+                            <div class="mb-3">
                                 <label class="form-label">Font Preview</label>
                                 <div id="fontPreview" class="font-preview">
                                     This is a preview of the selected font. The quick brown fox jumps over the lazy dog.
@@ -3596,11 +3599,11 @@ def schedule_dataset(dataset):
                             </div>
                             
                             <h6 class="mt-4 mb-3">Header Settings</h6>
-                                <div class="form-check mb-3">
+                            <div class="form-check mb-3">
                                 <input class="form-check-input" type="checkbox" id="include_header" name="include_header" {% if default_schedule.format_config.include_header %}checked{% endif %}>
                                 <label class="form-check-label" for="include_header">
                                     Include Custom Header
-                                    </label>
+                                </label>
                             </div>
                             
                             <div id="headerSettings" style="{% if not default_schedule.format_config.include_header %}display: none;{% endif %}">
@@ -3609,10 +3612,10 @@ def schedule_dataset(dataset):
                                 <div class="mb-3">
                                             <label for="header_title" class="form-label">Header Title</label>
                                             <input type="text" class="form-control" id="header_title" name="header_title" value="{{ default_schedule.format_config.header_title }}">
-                                </div>
-                                    </div>
+                        </div>
+                    </div>
                                     <div class="col-md-6">
-                                <div class="mb-3">
+                            <div class="mb-3">
                                             <label for="header_logo" class="form-label">Logo (optional)</label>
                                             <input type="file" class="form-control" id="header_logo" name="header_logo" accept="image/png,image/jpeg">
                                             <div class="form-text">Supported formats: PNG, JPG (max 2MB, max dimensions 1500x1500px). Large images may cause PDF generation to fail.</div>
@@ -3641,7 +3644,7 @@ def schedule_dataset(dataset):
                                                     <option value="#6f42c1" {% if default_schedule.format_config.header_color == '#6f42c1' %}selected{% endif %}>Purple</option>
                                                     <option value="#fd7e14" {% if default_schedule.format_config.header_color == '#fd7e14' %}selected{% endif %}>Orange</option>
                                                     <option value="#212529" {% if default_schedule.format_config.header_color == '#212529' %}selected{% endif %}>Black</option>
-                                                </select>
+                                    </select>
                                 </div>
                                         </div>
                                     </div>
@@ -3660,11 +3663,11 @@ def schedule_dataset(dataset):
                             </div>
                             
                             <h6 class="mt-4 mb-3">Content Settings</h6>
-                            <div class="form-check mb-3">
+                                <div class="form-check mb-3">
                                 <input class="form-check-input" type="checkbox" id="includeSummary" name="include_summary" {% if default_schedule.format_config.include_summary %}checked{% endif %}>
                                 <label class="form-check-label" for="includeSummary">
                                     Include Data Summary
-                                </label>
+                                    </label>
                             </div>
                             
                             <div class="form-check mb-3">
@@ -3672,24 +3675,24 @@ def schedule_dataset(dataset):
                                 <label class="form-check-label" for="includeVisualization">
                                     Include Visualization
                                 </label>
-                            </div>
+                                </div>
                             
-                            <div class="form-check mb-3">
+                                <div class="form-check mb-3">
                                 <input class="form-check-input" type="checkbox" id="limitRows" name="limit_rows" {% if default_schedule.format_config.max_rows %}checked{% endif %}>
                                 <label class="form-check-label" for="limitRows">
                                     Limit Number of Rows
-                                </label>
+                                    </label>
                             </div>
                             
-                            <div class="mb-3">
+                                <div class="mb-3">
                                 <label for="maxRows" class="form-label">Maximum Rows</label>
                                 <input type="number" class="form-control" id="maxRows" name="max_rows" value="{{ default_schedule.format_config.max_rows if default_schedule.format_config.max_rows else 1000 }}" min="1">
-                            </div>
+                                </div>
                             
                             
                             
                             <!-- Column Selection -->
-                            <div class="mb-3">
+                                <div class="mb-3">
                                 <label class="form-label">Column Selection</label>
                                 <div class="form-check">
                                     <input class="form-check-input" type="checkbox" id="select_columns" name="select_columns">
@@ -3728,9 +3731,9 @@ def schedule_dataset(dataset):
                                 <label class="form-check-label" for="limitRows">
                                     Limit Number of Rows
                                 </label>
-                            </div>
+                                </div>
                             
-                            <div class="mb-3">
+                                <div class="mb-3">
                                 <label for="maxRows" class="form-label">Maximum Rows</label>
                                 <input type="number" class="form-control" id="maxRows" name="max_rows" value="{{ default_schedule.format_config.max_rows if default_schedule.format_config.max_rows else 1000 }}" min="1">
                             </div>
@@ -3753,21 +3756,21 @@ def schedule_dataset(dataset):
                                 </div>
                                 
                                 <div id="emailSettings">
-                                    <div class="mb-3">
+                            <div class="mb-3">
                                         <label for="recipients" class="form-label">Recipients (comma-separated)</label>
                                         <input type="text" class="form-control" name="recipients" placeholder="email1@example.com, email2@example.com">
-                                    </div>
-                                    
+                            </div>
+                            
                                     <div class="mb-3">
                                         <label for="cc" class="form-label">CC (comma-separated)</label>
                                         <input type="text" class="form-control" name="cc" placeholder="cc1@example.com, cc2@example.com">
-                                    </div>
-                                    
+                            </div>
+                            
                                     <div class="mb-3">
                                         <label for="subject" class="form-label">Subject</label>
                                         <input type="text" class="form-control" id="subject" name="subject" value="{{ email_template.subject }}">
-                                    </div>
-                                    
+                            </div>
+                            
                                     <div class="mb-3">
                                         <label for="body" class="form-label">Email Body</label>
                                         <textarea class="form-control" id="body" name="body" rows="6">{{ email_template.body }}</textarea>
@@ -3778,20 +3781,20 @@ def schedule_dataset(dataset):
                             <!-- WhatsApp Delivery Tab -->
                             <div class="mt-4">
                                 <h6><i class="bi bi-chat"></i> WhatsApp Delivery</h6>
-                                <div class="form-check mb-3">
+                            <div class="form-check mb-3">
                                     <input class="form-check-input" type="checkbox" id="enable_whatsapp" name="enable_whatsapp">
                                     <label class="form-check-label" for="enable_whatsapp">
                                         Send Report via WhatsApp
-                                    </label>
+                                </label>
                                 </div>
                                 
                                 <div id="whatsappSettings" style="display: none;">
                                     <div class="alert alert-info">
                                         <i class="bi bi-info-circle"></i> Enter WhatsApp numbers with country code (e.g., +1234567890).
                                         Recipients must opt-in to receive messages. Separate multiple numbers with commas.
-                                    </div>
-                                    
-                                    <div class="mb-3">
+                            </div>
+                            
+                            <div class="mb-3">
                                         <label for="whatsapp_recipients" class="form-label">WhatsApp Recipients</label>
                                         <input type="text" class="form-control" name="whatsapp_recipients" placeholder="+1234567890, +0987654321">
                                     </div>
@@ -5814,6 +5817,53 @@ def save_email_settings_api():
             'success': False,
             'error': str(e)
         }), 500
+
+# Add a catch-all route for any other paths that should be handled by the frontend
+@app.route('/<path:path>')
+def catch_all(path):
+    try:
+        from app import serve_frontend
+        return serve_frontend(path)
+    except ImportError:
+        # Fallback if app module import fails
+        static_folder = os.path.join(os.path.dirname(__file__), 'frontend', 'build')
+        if path != "" and os.path.exists(os.path.join(static_folder, path)):
+            return send_from_directory(static_folder, path)
+        else:
+            # Try to serve index.html
+            if os.path.exists(os.path.join(static_folder, 'index.html')):
+                return send_from_directory(static_folder, 'index.html')
+            else:
+                # Return a basic fallback response
+                return """
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Fincode API Server</title>
+                    <style>
+                        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+                        h1 { color: #333; }
+                        .status { padding: 15px; background-color: #f0f8ff; border-radius: 5px; }
+                    </style>
+                </head>
+                <body>
+                    <h1>Fincode API Server</h1>
+                    <div class="status">
+                        <p>API server is running successfully.</p>
+                        <p>Frontend application is not yet built or not found at the expected location.</p>
+                    </div>
+                </body>
+                </html>
+                """, 200, {'Content-Type': 'text/html'}
+
+@app.route('/api/status')
+def api_status():
+    return jsonify({
+        "status": "ok",
+        "message": "API server is running correctly",
+        "environment": os.environ.get('FLASK_ENV', 'development'),
+        "render": os.environ.get('RENDER', 'false')
+    })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8501))

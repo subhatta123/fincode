@@ -1,5 +1,16 @@
-from app import app
 import os
+import sys
+
+# Add the current directory to the Python path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Import the app from the right module
+try:
+    from app import app
+    print("Imported app from app/__init__.py")
+except ImportError:
+    from app import app
+    print("Imported app from app.py")
 
 # Add debug info
 print(f"Current working directory: {os.getcwd()}")
@@ -35,5 +46,12 @@ if not os.path.exists(index_path):
 </body>
 </html>""")
 
+# Print routes for debugging
+print("Available routes:")
+for rule in app.url_map.iter_rules():
+    print(f"Route: {rule}, Endpoint: {rule.endpoint}")
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True) 
+    # Get port from environment variable or use default
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=True) 
