@@ -96,15 +96,31 @@ def serve_index():
             body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
             .container { max-width: 800px; margin: 0 auto; }
             h1 { color: #0066cc; }
-            .btn { display: inline-block; background-color: #0066cc; color: white; padding: 10px 15px; margin-top: 15px; text-decoration: none; border-radius: 4px; }
+            .btn { display: inline-block; background-color: #0066cc; color: white; padding: 10px 15px; margin: 5px; text-decoration: none; border-radius: 4px; }
+            .test-area { margin-top: 30px; padding: 15px; background-color: #f5f5f5; border-radius: 5px; }
+            h2 { font-size: 18px; margin-top: 30px; }
         </style>
     </head>
     <body>
         <div class="container">
             <h1>Tableau Data Reporter</h1>
             <p>API server is running. Please log in to access the application.</p>
-            <a href="/login" class="btn">Login</a>
-            <a href="/register" class="btn" style="background-color: #666;">Register</a>
+            
+            <div>
+                <a href="/login" class="btn">Login</a>
+                <a href="/register" class="btn" style="background-color: #666;">Register</a>
+            </div>
+            
+            <div class="test-area">
+                <h2>Test Routes</h2>
+                <p>If you're experiencing 404 errors, try these test routes:</p>
+                <a href="/test" class="btn">Basic Test</a>
+                <a href="/login-test" class="btn">Login Test</a>
+                <a href="/register-test" class="btn">Register Test</a>
+                <a href="/simple-login" class="btn">Simple Login</a>
+                <a href="/simple-register" class="btn">Simple Register</a>
+                <a href="/debug/routes" class="btn">View All Routes</a>
+            </div>
         </div>
     </body>
     </html>
@@ -137,4 +153,79 @@ try:
 except Exception as e:
     print(f"Error with user management: {str(e)}")
 
+# Health check endpoint for Render
+@app.route('/health')
+def health_check():
+    """Health check endpoint for Render."""
     return jsonify({'status': 'ok'})
+
+# Add test routes for troubleshooting
+@app.route('/test')
+def test_route():
+    """Simple test route to verify routing is working."""
+    print("TEST ROUTE ACCESSED")
+    return "Test route is working! Your Flask routing system is functioning."
+
+@app.route('/login-test')
+def login_test():
+    """Simple test route for the login page."""
+    print("LOGIN TEST ROUTE ACCESSED")
+    return """
+    <html>
+    <head><title>Login Test</title></head>
+    <body>
+        <h1>Login Test Page</h1>
+        <p>This is a test login page that bypasses the normal Flask login route.</p>
+        <form method="post" action="/login">
+            <div>
+                <label>Username: <input type="text" name="username"></label>
+            </div>
+            <div>
+                <label>Password: <input type="password" name="password"></label>
+            </div>
+            <button type="submit">Login</button>
+        </form>
+    </body>
+    </html>
+    """
+
+@app.route('/register-test')
+def register_test():
+    """Simple test route for the register page."""
+    print("REGISTER TEST ROUTE ACCESSED")
+    return """
+    <html>
+    <head><title>Register Test</title></head>
+    <body>
+        <h1>Register Test Page</h1>
+        <p>This is a test register page that bypasses the normal Flask register route.</p>
+        <form method="post" action="/register">
+            <div>
+                <label>Username: <input type="text" name="username"></label>
+            </div>
+            <div>
+                <label>Password: <input type="password" name="password"></label>
+            </div>
+            <button type="submit">Register</button>
+        </form>
+    </body>
+    </html>
+    """
+
+# Additional import for simple auth
+import importlib.util
+try:
+    # Try to import the simple auth blueprint
+    spec = importlib.util.spec_from_file_location("simple_auth", "simple_auth.py")
+    simple_auth = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(simple_auth)
+    has_simple_auth = True
+    print("Simple auth module found and loaded")
+except Exception as e:
+    has_simple_auth = False
+    print(f"Simple auth module not available: {str(e)}")
+
+# Register the simple auth blueprint if available
+if has_simple_auth:
+    app.register_blueprint(simple_auth.auth_bp)
+    print("Registered simple auth blueprint with routes /simple-login and /simple-register")
