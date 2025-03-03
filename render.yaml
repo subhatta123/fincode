@@ -4,14 +4,16 @@ services:
     env: python
     region: ohio
     buildCommand: |
-      pip install -r requirements_simple.txt
-      echo "Simple build complete"
-    startCommand: gunicorn app_simple:app --bind 0.0.0.0:$PORT --workers 1 --log-level debug
+      chmod +x render_deploy_prepare.sh
+      ./render_deploy_prepare.sh
+      pip install flask==2.0.1 gunicorn==20.1.0 
+      echo "Minimal build complete with just Flask and gunicorn"
+    startCommand: gunicorn new_app:app --bind 0.0.0.0:$PORT --workers 1 --log-level debug
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.0
       - key: FLASK_APP
-        value: app_simple.py
+        value: new_app.py
       - key: FLASK_ENV
         value: production
       - key: RENDER
