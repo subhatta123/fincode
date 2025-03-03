@@ -68,6 +68,17 @@
             border-radius: 8px;
             margin-bottom: 20px;
         }
+        .test-area {
+            background-color: #fff3cd;
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 30px;
+            border-left: 5px solid #ffc107;
+        }
+        h2 {
+            color: #555;
+            margin-top: 0;
+        }
     </style>
 </head>
 <body>
@@ -114,6 +125,17 @@
         <p>Please log in to access the full functionality of the Tableau Data Reporter.</p>
         <a href="/login" class="btn">Login</a>
         <a href="/register" class="btn">Register</a>
+    </div>
+
+    <div class="test-area">
+        <h2>Test Routes</h2>
+        <p>If you're experiencing 404 errors with login/register, try these test routes:</p>
+        <a href="/test" class="btn">Basic Test</a>
+        <a href="/login-test" class="btn">Login Test</a>
+        <a href="/register-test" class="btn">Register Test</a>
+        <a href="/simple-login" class="btn">Simple Login</a>
+        <a href="/simple-register" class="btn">Simple Register</a>
+        <a href="/debug/routes" class="btn">View Routes</a>
     </div>
 </body>
 </html> 
