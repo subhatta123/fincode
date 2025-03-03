@@ -29,26 +29,25 @@ from reportlab.lib.colors import Color
 from reportlab.graphics.shapes import Image
 from reportlab.platypus import Spacer
 from PIL import Image
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
+# Log when app.py is imported
+logger.info("Starting app.py import")
 
 # Load environment variables from .env file
 load_dotenv()
 
-# Check if app directory exists first
-if os.path.exists(os.path.join(os.path.dirname(__file__), 'app')):
-    try:
-        # Try to import the Flask app from app/__init__.py
-        from app import app
-        print("Using app from app/__init__.py")
-    except ImportError:
-        # Fall back to creating our own app
-        app = Flask(__name__)
-        app.secret_key = os.urandom(24)  # For session management
-        print("Created new Flask app instance")
-else:
-    # Create Flask app directly
-    app = Flask(__name__)
-    app.secret_key = os.urandom(24)  # For session management
-    print("Created new Flask app instance (app/ directory not found)")
+# Create Flask app directly - DO NOT try to import from app/__init__.py to avoid circular imports
+app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
+
+# Log Flask app creation
+logger.info(f"Created Flask app with static_folder={app.static_folder}")
+logger.info(f"Static folder exists: {os.path.exists(app.static_folder) if app.static_folder else 'No static folder set'}")
 
 # Initialize managers
 user_manager = UserManagement()

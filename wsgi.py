@@ -1,55 +1,94 @@
 import os
 import sys
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 # Add the current directory to the Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Import the app from the right module
+# Log environment for debugging
+logger.info(f"Environment variables: {dict(os.environ)}")
+logger.info(f"Current working directory: {os.getcwd()}")
+logger.info(f"Python path: {sys.path}")
+
+# Import the app directly from app.py (not app/__init__.py)
 try:
+    # First try importing Flask directly
+    from flask import Flask
+    
+    # Create the app directly here for simplicity
+    app = Flask(__name__)
+    app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
+    
+    # Import necessary views from app.py
+    sys.path.insert(0, os.getcwd())
+    from app import (
+        login, register, home, logout, normal_user_dashboard, 
+        power_user_dashboard, admin_dashboard, api_status,
+        login_required, role_required, process_schedule_form
+    )
+    
+    # Register all the routes from app.py
+    app.route('/')(home)
+    app.route('/login', methods=['GET', 'POST'])(login)
+    app.route('/register', methods=['GET', 'POST'])(register)
+    app.route('/logout')(logout)
+    app.route('/normal-user')(login_required(role_required(['normal'])(normal_user_dashboard)))
+    app.route('/power-user')(login_required(role_required(['power'])(power_user_dashboard)))
+    app.route('/admin-dashboard')(login_required(role_required(['superadmin'])(admin_dashboard)))
+    app.route('/api/status')(api_status)
+    app.route('/create_schedule', methods=['POST'])(process_schedule_form)
+    
+    logger.info("Created Flask app and registered routes directly in wsgi.py")
+except Exception as e:
+    # Fall back to importing from app.py
+    logger.error(f"Failed to create Flask app directly: {str(e)}")
+    logger.info("Falling back to importing app from app.py")
     from app import app
-    print("Imported app from app/__init__.py")
-except ImportError:
-    from app import app
-    print("Imported app from app.py")
 
 # Add debug info
-print(f"Current working directory: {os.getcwd()}")
-print(f"Static folder: {app.static_folder}")
-print(f"Static folder exists: {os.path.exists(app.static_folder)}")
-
-# Make sure the static folder exists
-if not os.path.exists(app.static_folder):
-    print(f"Creating static folder: {app.static_folder}")
-    os.makedirs(app.static_folder, exist_ok=True)
-
-# Create the index.html file if it doesn't exist
-index_path = os.path.join(app.static_folder, 'index.html')
-if not os.path.exists(index_path):
-    print(f"Creating index.html at {index_path}")
-    with open(index_path, 'w') as f:
-        f.write("""<!DOCTYPE html>
-<html>
-<head>
-    <title>Fincode API Server</title>
-    <style>
-        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
-        h1 { color: #333; }
-        .status { padding: 15px; background-color: #f0f8ff; border-radius: 5px; }
-    </style>
-</head>
-<body>
-    <h1>Fincode API Server</h1>
-    <div class="status">
-        <p>API server is running successfully.</p>
-        <p>This is a temporary frontend page. The actual frontend will be added in future deployments.</p>
-    </div>
-</body>
-</html>""")
+logger.info(f"Current working directory: {os.getcwd()}")
+logger.info(f"Static folder: {app.static_folder}")
+logger.info(f"Static folder exists: {os.path.exists(app.static_folder)}")
 
 # Print routes for debugging
-print("Available routes:")
+logger.info("Available routes:")
 for rule in app.url_map.iter_rules():
-    print(f"Route: {rule}, Endpoint: {rule.endpoint}")
+    logger.info(f"Route: {rule}, Endpoint: {rule.endpoint}")
+
+# Define a simple root route as fallback
+@app.route('/')
+def root():
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Fincode API Server</title>
+        <style>
+            body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+            h1 { color: #333; }
+            .status { padding: 15px; background-color: #f0f8ff; border-radius: 5px; }
+            .nav { margin-top: 20px; }
+            .nav a { display: inline-block; margin-right: 15px; padding: 8px 15px; background: #0d6efd; color: white; text-decoration: none; border-radius: 4px; }
+        </style>
+    </head>
+    <body>
+        <h1>Fincode API Server</h1>
+        <div class="status">
+            <p>API server is running successfully on Render.</p>
+            <p>Use the links below to access different parts of the application.</p>
+        </div>
+        <div class="nav">
+            <a href="/login">Login</a>
+            <a href="/register">Register</a>
+            <a href="/api/status">API Status</a>
+        </div>
+    </body>
+    </html>
+    """
 
 if __name__ == "__main__":
     # Get port from environment variable or use default
