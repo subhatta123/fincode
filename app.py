@@ -56,15 +56,66 @@ app.secret_key = os.environ.get('FLASK_SECRET_KEY', os.urandom(24))
 from render_config import get_base_url
 base_url = get_base_url()
 
-# Initialize managers
-user_manager = UserManagement()
-report_manager = ReportManager()
-data_analyzer = DataAnalyzer()
-report_formatter = ReportFormatter()
+# Ensure data directory exists
+data_dir = os.path.join(os.getcwd(), 'data')
+os.makedirs(data_dir, exist_ok=True)
+print(f"Data directory created or exists: {data_dir}")
 
-# Make sure necessary directories exist
-for directory in ['data', 'static/reports', 'static/logos', 'uploads/logos']:
-    os.makedirs(directory, exist_ok=True)
+# Initialize managers
+user_manager = None
+report_manager = None
+data_analyzer = None
+report_formatter = None
+
+# Try to import and initialize managers
+try:
+    from user_management import UserManagement
+    user_manager = UserManagement()
+    print("User manager initialized successfully")
+    
+    try:
+        from report_manager_new import ReportManager
+        report_manager = ReportManager()
+        print("Report manager initialized successfully")
+    except Exception as e:
+        print(f"Warning: Could not initialize report manager: {str(e)}")
+    
+    try:
+        from data_analyzer import DataAnalyzer
+        data_analyzer = DataAnalyzer()
+        print("Data analyzer initialized successfully")
+    except Exception as e:
+        print(f"Warning: Could not initialize data analyzer: {str(e)}")
+    
+    try:
+        from report_formatter_new import ReportFormatter
+        report_formatter = ReportFormatter()
+        print("Report formatter initialized successfully")
+    except Exception as e:
+        print(f"Warning: Could not initialize report formatter: {str(e)}")
+    
+    # Ensure superadmin exists
+    try:
+        superadmin = user_manager.get_user_by_username('superadmin')
+        if not superadmin:
+            print("Creating superadmin user...")
+            # Create superadmin
+            user_id = user_manager.create_user(
+                username='superadmin',
+                password='admin123',
+                role='superadmin',
+                permission_type='all',
+                organization_id=1,
+                organization_name='Default Organization'
+            )
+            print(f"Superadmin created with ID: {user_id}")
+        else:
+            print("Superadmin exists:", superadmin)
+    except Exception as e:
+        print(f"Warning: Could not ensure superadmin exists: {str(e)}")
+except Exception as e:
+    print(f"Error initializing managers: {str(e)}")
+    print("Running in test mode...")
 
 # Validation helper functions
 def allowed_file(filename):
@@ -103,26 +154,52 @@ def role_required(roles):
         return decorated_function
     return decorator
 
-# Ensure superadmin exists
-def ensure_superadmin_exists():
+# Database initialization functions
+def init_db():
+    """Initialize the database with required tables."""
     try:
-        superadmin = user_manager.get_user_by_username('superadmin')
-        if not superadmin:
-            # Create default superadmin
-            user_manager.create_user(
-                username='superadmin',
-                password='admin123',
-                role='superadmin',
-                permission_type='all',
-                organization_id=1,
-                organization_name='Admin Organization'
-            )
-            print("Superadmin user created")
+        conn = sqlite3.connect('data/app.db')
+        cursor = conn.cursor()
+        
+        # Create users table if it doesn't exist
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            role TEXT NOT NULL,
+            permission_type TEXT NOT NULL,
+            organization_id INTEGER NOT NULL,
+            organization_name TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
+        
+        # Create organizations table if it doesn't exist
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS organizations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
+        
+        # Insert default organization if it doesn't exist
+        cursor.execute('SELECT id FROM organizations WHERE id = 1')
+        if not cursor.fetchone():
+            cursor.execute('INSERT INTO organizations (id, name) VALUES (1, "Default Organization")')
+        
+        conn.commit()
+        conn.close()
+        print("Database initialized successfully")
+        return True
     except Exception as e:
-        print(f"Error ensuring superadmin exists: {str(e)}")
+        print(f"Error initializing database: {str(e)}")
+        return False
 
-# Call function to ensure superadmin exists
-ensure_superadmin_exists()
+# Test mode function to check if the application is running without database
+def is_test_mode():
+    return user_manager is None
 
 # Helper functions for dataset preview
 def get_dataset_preview_html(dataset_name):
@@ -237,14 +314,6 @@ def debug_routes():
         'routes': routes_by_path
     })
 
-# Ensure the import for user_management is correct
-try:
-    # Verify user manager is initialized properly
-    user_manager.get_all_users()
-    print("User management loaded successfully")
-except Exception as e:
-    print(f"Error with user management: {str(e)}")
-
 # Health check endpoint for Render
 @app.route('/health')
 def health_check():
@@ -324,39 +393,56 @@ if has_simple_auth:
 # Login route
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    error = None
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
         
-        # Try superadmin verification first
-        if username == 'superadmin':
-            user = user_manager.verify_user(username, password)
-            if user:
-                session['user'] = {
-                    'id': user[0],
-                    'username': user[1],
-                    'role': user[2],
-                    'permission_type': user[3],
-                    'organization_id': user[4],
-                    'organization_name': user[5]
-                }
-                flash('Login successful!')
-                return redirect(url_for('serve_index'))
+        # For debugging
+        print(f"Login attempt: {username}")
         
-        # Regular authentication for other users
-        user = user_manager.verify_user(username, password)
-        if user:
-            session['user'] = {
-                'id': user[0],
-                'username': user[1],
-                'role': user[2],
-                'permission_type': user[3],
-                'organization_id': user[4],
-                'organization_name': user[5]
-            }
-            flash('Login successful!')
-            return redirect(url_for('serve_index'))
-        flash('Invalid credentials')
+        # Test mode handling
+        if is_test_mode():
+            if username == 'admin' and password == 'password':
+                session['user'] = {
+                    'id': 1,
+                    'username': username,
+                    'role': 'admin'
+                }
+                flash('Login successful! (Test mode)')
+                return redirect(url_for('serve_index'))
+            elif username == 'superadmin' and password == 'admin123':
+                session['user'] = {
+                    'id': 1,
+                    'username': 'superadmin',
+                    'role': 'superadmin'
+                }
+                flash('Login successful! (Test mode)')
+                return redirect(url_for('serve_index'))
+            else:
+                error = 'Invalid credentials (Test mode)'
+        else:
+            try:
+                # Try verification with user manager
+                user = user_manager.verify_user(username, password)
+                if user:
+                    session['user'] = {
+                        'id': user[0],
+                        'username': user[1],
+                        'role': user[2],
+                        'permission_type': user[3],
+                        'organization_id': user[4],
+                        'organization_name': user[5]
+                    }
+                    flash('Login successful!')
+                    print(f"User login successful: {username}")
+                    return redirect(url_for('serve_index'))
+                else:
+                    print(f"User login failed: {username}")
+                    error = 'Invalid credentials'
+            except Exception as e:
+                print(f"Login error: {str(e)}")
+                error = f"An error occurred: {str(e)}"
     
     return render_template_string('''
         <!DOCTYPE html>
@@ -372,12 +458,33 @@ def login():
                     padding: 15px;
                     margin: auto;
                 }
+                .test-mode-banner {
+                    background-color: #ffc107;
+                    color: #000;
+                    padding: 10px;
+                    text-align: center;
+                    margin-bottom: 20px;
+                }
             </style>
         </head>
         <body>
             <div class="container">
+                {% if test_mode %}
+                <div class="test-mode-banner">
+                    <strong>TEST MODE</strong> - Running without database connection. Use:<br>
+                    Username: admin<br>
+                    Password: password<br>
+                    Or<br>
+                    Username: superadmin<br>
+                    Password: admin123
+                </div>
+                {% endif %}
+                
                 <div class="form-signin text-center">
                     <h1 class="h3 mb-3">Tableau Data Reporter</h1>
+                    {% if error %}
+                        <div class="alert alert-danger">{{ error }}</div>
+                    {% endif %}
                     {% with messages = get_flashed_messages() %}
                         {% if messages %}
                             {% for message in messages %}
@@ -403,11 +510,12 @@ def login():
             </div>
         </body>
         </html>
-    ''')
+    ''', error=error, test_mode=is_test_mode())
 
 # Register route
 @app.route('/register', methods=['GET', 'POST'])
 def register():
+    error = None
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
@@ -416,38 +524,54 @@ def register():
         organization_name = request.form.get('organization_name', 'Default Organization')
         permission_type = request.form.get('permission_type', 'basic')
         
+        print(f"Registration attempt: {username}, role: {role}")
+        
         if not username or not password:
-            flash('Username and password are required.')
-            return redirect(url_for('register'))
+            error = 'Username and password are required.'
+            return render_template_string(get_register_template(), error=error, test_mode=is_test_mode())
         
         # Password validation
         if len(password) < 6:
-            flash('Password must be at least 6 characters long.')
-            return redirect(url_for('register'))
+            error = 'Password must be at least 6 characters long.'
+            return render_template_string(get_register_template(), error=error, test_mode=is_test_mode())
         
-        # Check if username already exists
-        existing_user = user_manager.get_user_by_username(username)
-        if existing_user:
-            flash('Username already exists.')
-            return redirect(url_for('register'))
-        
-        # Create new user
-        user_id = user_manager.create_user(
-            username=username,
-            password=password,
-            role=role,
-            permission_type=permission_type,
-            organization_id=organization_id,
-            organization_name=organization_name
-        )
-        
-        if user_id:
-            flash('Registration successful! You can now log in.')
+        # In test mode, just show success
+        if is_test_mode():
+            flash('Registration successful! (Test mode - no database write)')
             return redirect(url_for('login'))
-        else:
-            flash('Error creating user. Please try again.')
+        
+        try:
+            # Check if username already exists
+            existing_user = user_manager.get_user_by_username(username)
+            if existing_user:
+                error = 'Username already exists.'
+                return render_template_string(get_register_template(), error=error, test_mode=is_test_mode())
+            
+            # Create new user
+            user_id = user_manager.create_user(
+                username=username,
+                password=password,
+                role=role,
+                permission_type=permission_type,
+                organization_id=organization_id,
+                organization_name=organization_name
+            )
+            
+            if user_id:
+                flash('Registration successful! You can now log in.')
+                print(f"User registered successfully: {username}, ID: {user_id}")
+                return redirect(url_for('login'))
+            else:
+                error = 'Error creating user. Please try again.'
+                print(f"Failed to register user: {username}")
+        except Exception as e:
+            error = f"Registration error: {str(e)}"
+            print(error)
     
-    return render_template_string('''
+    return render_template_string(get_register_template(), error=error, test_mode=is_test_mode())
+
+def get_register_template():
+    return '''
         <!DOCTYPE html>
         <html>
         <head>
@@ -457,16 +581,32 @@ def register():
                 body { padding-top: 40px; }
                 .form-register {
                     width: 100%;
-                    max-width: 330px;
+                    max-width: 400px;
                     padding: 15px;
                     margin: auto;
+                }
+                .test-mode-banner {
+                    background-color: #ffc107;
+                    color: #000;
+                    padding: 10px;
+                    text-align: center;
+                    margin-bottom: 20px;
                 }
             </style>
         </head>
         <body>
             <div class="container">
+                {% if test_mode %}
+                <div class="test-mode-banner">
+                    <strong>TEST MODE</strong> - Running without database connection. Registration will simulate success but not store data.
+                </div>
+                {% endif %}
+                
                 <div class="form-register text-center">
                     <h1 class="h3 mb-3">Register New Account</h1>
+                    {% if error %}
+                        <div class="alert alert-danger">{{ error }}</div>
+                    {% endif %}
                     {% with messages = get_flashed_messages() %}
                         {% if messages %}
                             {% for message in messages %}
@@ -487,8 +627,21 @@ def register():
                             <select class="form-select" name="role">
                                 <option value="normal">Normal User</option>
                                 <option value="power">Power User</option>
+                                <option value="admin">Admin</option>
                             </select>
                             <label>Role</label>
+                        </div>
+                        <div class="form-floating mb-3">
+                            <select class="form-select" name="permission_type">
+                                <option value="basic">Basic</option>
+                                <option value="advanced">Advanced</option>
+                                <option value="all">All</option>
+                            </select>
+                            <label>Permission Type</label>
+                        </div>
+                        <div class="form-floating mb-3">
+                            <input type="text" class="form-control" name="organization_name" placeholder="Organization Name" value="Default Organization">
+                            <label>Organization Name</label>
                         </div>
                         <button class="w-100 btn btn-lg btn-primary" type="submit">Register</button>
                         <p class="mt-3">
@@ -499,7 +652,7 @@ def register():
             </div>
         </body>
         </html>
-    ''')
+    '''
 
 # Logout route
 @app.route('/logout')

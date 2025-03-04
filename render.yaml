@@ -5,14 +5,8 @@ services:
     region: ohio
     buildCommand: pip install -r requirements.txt && bash setup_static.sh
     startCommand: >-
-      python -c "import os, sqlite3; os.makedirs('data', exist_ok=True); 
-      conn = sqlite3.connect('data/app.db'); 
-      cursor = conn.cursor(); 
-      cursor.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, role TEXT NOT NULL, permission_type TEXT NOT NULL, organization_id INTEGER NOT NULL, organization_name TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)'); 
-      cursor.execute('CREATE TABLE IF NOT EXISTS organizations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)'); 
-      cursor.execute('SELECT id FROM organizations WHERE id = 1'); 
-      if not cursor.fetchone(): cursor.execute('INSERT INTO organizations (id, name) VALUES (1, \"Default Organization\")'); 
-      conn.commit(); conn.close(); print('Database initialized');" &&
+      python init_database.py &&
+      python -c "import os; print('DATABASE CHECK:'); print(os.path.exists('data/app.db')); os.makedirs('data', exist_ok=True); print('DATA DIR:', os.listdir('data'));" &&
       gunicorn --workers 1 --threads 8 --timeout 180 --bind 0.0.0.0:$PORT --log-level debug "app:app"
     envVars:
       - key: PYTHON_VERSION
