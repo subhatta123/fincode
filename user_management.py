@@ -2,212 +2,237 @@ import sqlite3
 import hashlib
 import os
 from pathlib import Path
+import uuid
+import datetime
 
 class UserManagement:
     def __init__(self):
-        """Initialize user manager"""
-        # Create data directory if it doesn't exist
-        self.data_dir = Path("data")
-        self.data_dir.mkdir(exist_ok=True)
-        
-        # Set database path
-        self.db_path = str(self.data_dir / "tableau_data.db")
-        print(f"Database path: {self.db_path}")  # Debug print
-        
-        # Initialize database
-        self.setup_database()
+        """Initialize the user management system."""
+        self.db_file = "data/app.db"
+        self._ensure_data_dir()
+        self._init_db()
     
-    def hash_password(self, password: str) -> str:
-        """Hash password using SHA-256"""
-        return hashlib.sha256(password.encode()).hexdigest()
+    def _ensure_data_dir(self):
+        """Ensure data directory exists."""
+        data_dir = os.path.dirname(self.db_file)
+        if not os.path.exists(data_dir):
+            os.makedirs(data_dir, exist_ok=True)
+            print(f"Created data directory: {data_dir}")
     
-    def setup_database(self):
-        """Set up the database tables"""
+    def _init_db(self):
+        """Initialize the database with necessary tables."""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                
-                # Create organizations table
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS organizations (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        name TEXT UNIQUE NOT NULL
-                    )
-                ''')
-                
-                # Create users table with permission field and email if it doesn't exist
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS users (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        username TEXT UNIQUE NOT NULL,
-                        password TEXT NOT NULL,
-                        role TEXT NOT NULL,
-                        permission_type TEXT DEFAULT 'normal',
-                        organization_id INTEGER,
-                        email TEXT,
-                        FOREIGN KEY (organization_id) REFERENCES organizations(id)
-                    )
-                ''')
-                
-                # Drop existing superadmin to ensure clean state
-                cursor.execute("DELETE FROM users WHERE username = 'superadmin'")
-                
-                # Create superadmin user
-                hashed_password = self.hash_password('superadmin')
-                cursor.execute('''
-                    INSERT INTO users (username, password, role, permission_type, organization_id, email)
-                    VALUES ('superadmin', ?, 'superadmin', 'superadmin', NULL, 'admin@example.com')
-                ''', (hashed_password,))
-                print("Created/Updated superadmin user with password: superadmin")
-                
-                conn.commit()
-                print("Database setup completed successfully")
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            
+            # Create users table
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL,
+                role TEXT NOT NULL,
+                permission_type TEXT NOT NULL,
+                organization_id INTEGER NOT NULL,
+                organization_name TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+            
+            # Create organizations table
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS organizations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+            
+            # Insert default organization if it doesn't exist
+            cursor.execute('SELECT id FROM organizations WHERE id = 1')
+            if not cursor.fetchone():
+                cursor.execute('INSERT INTO organizations (id, name) VALUES (1, "Default Organization")')
+            
+            conn.commit()
+            conn.close()
+            print("UserManagement database initialized successfully")
         except Exception as e:
-            print(f"Error setting up database: {str(e)}")
+            print(f"Error initializing user database: {str(e)}")
             raise
     
-    def verify_user(self, username: str, password: str):
-        """Verify user credentials and return user data"""
+    def hash_password(self, password):
+        """Hash a password for storage."""
+        salt = uuid.uuid4().hex
+        hashed = hashlib.sha256(salt.encode() + password.encode()).hexdigest()
+        return f"{salt}${hashed}"
+    
+    def verify_password(self, stored_password, provided_password):
+        """Verify a password against its stored hash."""
+        salt, hashed = stored_password.split('$')
+        verified_hash = hashlib.sha256(salt.encode() + provided_password.encode()).hexdigest()
+        return verified_hash == hashed
+    
+    def create_user(self, username, password, role, permission_type, organization_id=1, organization_name="Default Organization"):
+        """Create a new user."""
         try:
-            print(f"Verifying user: {username}")  # Debug print
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                hashed_password = self.hash_password(password)
-                
-                # Special handling for superadmin
-                if username == 'superadmin':
-                    # Ensure superadmin has correct permissions
-                    cursor.execute("""
-                        UPDATE users 
-                        SET permission_type = 'superadmin', 
-                            role = 'superadmin'
-                        WHERE username = 'superadmin'
-                    """)
-                    conn.commit()
-                
-                # Get user data with consistent role and permission_type
-                cursor.execute('''
-                    SELECT 
-                        u.id, 
-                        u.username, 
-                        CASE 
-                            WHEN u.username = 'superadmin' THEN 'superadmin'
-                            ELSE COALESCE(u.permission_type, u.role)
-                        END as role,
-                        CASE 
-                            WHEN u.username = 'superadmin' THEN 'superadmin'
-                            ELSE COALESCE(u.permission_type, 'normal')
-                        END as permission_type,
-                        u.organization_id, 
-                        o.name as org_name
-                    FROM users u
-                    LEFT JOIN organizations o ON u.organization_id = o.id
-                    WHERE u.username = ? AND u.password = ?
-                ''', (username, hashed_password))
-                
-                user = cursor.fetchone()
-                if user:
-                    print(f"Found user: {user}")  # Debug print
-                    
-                    # Ensure role and permission_type are in sync for non-superadmin users
-                    if username != 'superadmin':
-                        cursor.execute('''
-                            UPDATE users 
-                            SET role = permission_type
-                            WHERE username = ? AND role != permission_type
-                        ''', (username,))
-                        conn.commit()
-                    
-                    return user
-                print("No user found with provided credentials")  # Debug print
+            # Check if username already exists
+            existing_user = self.get_user_by_username(username)
+            if existing_user:
+                print(f"Username '{username}' already exists")
+                return False
+            
+            # Hash the password
+            hashed_password = self.hash_password(password)
+            
+            # Insert new user
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute(
+                'INSERT INTO users (username, password, role, permission_type, organization_id, organization_name) VALUES (?, ?, ?, ?, ?, ?)',
+                (username, hashed_password, role, permission_type, organization_id, organization_name)
+            )
+            user_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+            
+            print(f"User created: {username}, ID: {user_id}")
+            return user_id
+        except Exception as e:
+            print(f"Error creating user: {str(e)}")
+            return False
+    
+    def verify_user(self, username, password):
+        """Verify user credentials and return user data if valid."""
+        try:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM users WHERE username = ?', (username,))
+            user = cursor.fetchone()
+            conn.close()
+            
+            if user and self.verify_password(user[2], password):
+                print(f"User verification successful: {username}")
+                return user
+            else:
+                print(f"User verification failed: {username}")
                 return None
         except Exception as e:
             print(f"Error verifying user: {str(e)}")
             return None
     
-    def update_user_permission(self, username: str, permission_type: str) -> bool:
-        """Update user's permission type and role"""
+    def get_user_by_username(self, username):
+        """Get a user by username."""
         try:
-            print(f"Updating permission for {username} to {permission_type}")  # Debug print
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                
-                # Don't allow updating superadmin
-                cursor.execute("SELECT role FROM users WHERE username = ?", (username,))
-                current_role = cursor.fetchone()
-                if current_role and current_role[0] == 'superadmin':
-                    print("Cannot update superadmin permissions")
-                    return False
-                
-                # Update both permission_type and role to maintain consistency
-                cursor.execute('''
-                    UPDATE users 
-                    SET permission_type = ?,
-                        role = ?
-                    WHERE username = ?
-                ''', (permission_type, permission_type, username))
-                
-                conn.commit()
-                success = cursor.rowcount > 0
-                print(f"Update {'successful' if success else 'failed'}")  # Debug print
-                return success
-                
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM users WHERE username = ?', (username,))
+            user = cursor.fetchone()
+            conn.close()
+            return user
         except Exception as e:
-            print(f"Error updating permission: {str(e)}")
-            return False
+            print(f"Error getting user by username: {str(e)}")
+            return None
     
-    def add_user_to_org(self, username: str, password: str, org_id: int = None, permission_type: str = 'normal', email: str = None):
-        """Add a new user to an organization"""
+    def get_user_by_id(self, user_id):
+        """Get a user by ID."""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                
-                # If no org_id provided, create a new organization for the user
-                if org_id is None and username != 'superadmin':
-                    org_name = f"{username}'s Organization"
-                    cursor.execute('INSERT INTO organizations (name) VALUES (?)', (org_name,))
-                    org_id = cursor.lastrowid
-                    print(f"Created new organization: {org_name} with ID: {org_id}")
-                
-                # Add user with specified permission type and hashed password
-                hashed_password = self.hash_password(password)
-                cursor.execute('''
-                    INSERT INTO users (username, password, role, permission_type, organization_id, email)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (username, hashed_password, permission_type, permission_type, org_id, email))
-                
-                conn.commit()
-                print(f"Added user {username} to organization {org_id} with permission {permission_type}")
-                return True
-                
-        except sqlite3.IntegrityError as e:
-            print(f"Database integrity error: {str(e)}")
-            if "UNIQUE constraint failed" in str(e):
-                raise ValueError("Username already exists")
-            raise
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))
+            user = cursor.fetchone()
+            conn.close()
+            return user
         except Exception as e:
-            print(f"Error adding user: {str(e)}")
-            return False 
+            print(f"Error getting user by ID: {str(e)}")
+            return None
     
     def get_all_users(self):
-        """Get all users with their organization details"""
+        """Get all users."""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    SELECT 
-                        u.username,
-                        u.role,
-                        u.permission_type,
-                        u.email,
-                        o.name as org_name
-                    FROM users u
-                    LEFT JOIN organizations o ON u.organization_id = o.id
-                    ORDER BY u.username
-                ''')
-                users = cursor.fetchall()
-                print(f"Found {len(users)} users")  # Debug print
-                return users
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM users')
+            users = cursor.fetchall()
+            conn.close()
+            return users
         except Exception as e:
-            print(f"Error getting users: {str(e)}")
+            print(f"Error getting all users: {str(e)}")
+            return []
+    
+    def update_user(self, user_id, updates):
+        """Update user information."""
+        try:
+            valid_fields = ['username', 'password', 'role', 'permission_type', 'organization_id', 'organization_name']
+            update_fields = []
+            update_values = []
+            
+            for field, value in updates.items():
+                if field in valid_fields:
+                    if field == 'password':
+                        value = self.hash_password(value)
+                    update_fields.append(f"{field} = ?")
+                    update_values.append(value)
+            
+            if not update_fields:
+                return False
+            
+            update_values.append(user_id)
+            
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"UPDATE users SET {', '.join(update_fields)} WHERE id = ?",
+                update_values
+            )
+            success = cursor.rowcount > 0
+            conn.commit()
+            conn.close()
+            
+            return success
+        except Exception as e:
+            print(f"Error updating user: {str(e)}")
+            return False
+    
+    def delete_user(self, user_id):
+        """Delete a user."""
+        try:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM users WHERE id = ?', (user_id,))
+            success = cursor.rowcount > 0
+            conn.commit()
+            conn.close()
+            
+            return success
+        except Exception as e:
+            print(f"Error deleting user: {str(e)}")
+            return False
+    
+    def create_organization(self, name):
+        """Create a new organization."""
+        try:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute('INSERT INTO organizations (name) VALUES (?)', (name,))
+            org_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+            
+            return org_id
+        except Exception as e:
+            print(f"Error creating organization: {str(e)}")
+            return False
+    
+    def get_all_organizations(self):
+        """Get all organizations."""
+        try:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM organizations')
+            orgs = cursor.fetchall()
+            conn.close()
+            
+            return orgs
+        except Exception as e:
+            print(f"Error getting organizations: {str(e)}")
             return [] 
