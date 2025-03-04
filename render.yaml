@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: tableau-data-reporter
+    env: python
+    region: ohio
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 180
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9.0
+      - key: SMTP_SERVER
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SENDER_EMAIL
+        sync: false
+      - key: SENDER_PASSWORD
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_WHATSAPP_NUMBER
+        sync: false
+      - key: BASE_URL
+        sync: false
+      - key: RENDER
+        value: true
+      - key: RENDER_EXTERNAL_URL
+        fromService:
+          type: web
+          name: tableau-data-reporter
+          property: url
+    disk:
+      name: data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1 

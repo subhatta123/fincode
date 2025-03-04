@@ -1,0 +1,36 @@
+[33mcommit 526f15189a390dc6e033a061c97322167dc048b3[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmaster[m[33m, [m[1;31morigin/master[m[33m)[m
+Author: Your Name <your.email@example.com>
+Date:   Thu Feb 20 17:00:22 2025 +0530
+
+    ok7
+
+[33mcommit 8b4b9d955a3c8da2443b6e6fded95c9b7ef44c62[m
+Author: Your Name <your.email@example.com>
+Date:   Thu Feb 20 16:30:42 2025 +0530
+
+    ok2
+
+[33mcommit bf0bb04a6f6228f5b3bbf7856ec729dfbc294b79[m
+Author: Your Name <your.email@example.com>
+Date:   Thu Feb 20 16:12:13 2025 +0530
+
+    okk
+
+[33mcommit 64bb28a7e9c0547d46cbbef63d19f4115ab3c707[m
+Author: Your Name <your.email@example.com>
+Date:   Thu Feb 20 15:27:26 2025 +0530
+
+    ok
+
+[33mcommit 0e014702b203fabdb05b6c7f1c0dec1f0eeb5355[m
+Author: Your Name <your.email@example.com>
+Date:   Thu Feb 20 14:38:37 2025 +0530
+
+    feat: Enhance report generation and scheduling with improved formatting and timezone support
+    
+    - Updated report_formatter_new.py to use getSampleStyleSheet() for title style
+    - Added timezone selection in schedule configuration
+    - Improved error handling and data loading in report generation
+    - Migrated tableau_connections to an internal table
+    - Created tableau_utils.py for Tableau authentication and data download
+    - Enhanced schedule configuration with more robust validation and user feedback
