@@ -3,26 +3,11 @@ services:
     name: tableau-data-reporter
     env: python
     region: ohio
-    buildCommand: pip install -r requirements.txt && bash setup_static.sh
-    startCommand: >-
-      python init_database.py &&
-      python -c "import os; print('DATABASE CHECK:'); print(os.path.exists('data/app.db')); os.makedirs('data', exist_ok=True); print('DATA DIR:', os.listdir('data'));" &&
-      gunicorn --workers 1 --threads 8 --timeout 180 --bind 0.0.0.0:$PORT --log-level debug "app:app"
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 180
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.0
-      - key: FLASK_SECRET_KEY
-        generateValue: true
-      - key: FLASK_DEBUG
-        value: "true"
-      - key: FLASK_ENV
-        value: "development"
-      - key: FLASK_APP
-        value: "app.py"
-      - key: STATIC_FOLDER
-        value: "/opt/render/project/src/frontend/build"
-      - key: STATIC_URL_PATH
-        value: "/static_files"
       - key: SMTP_SERVER
         sync: false
       - key: SMTP_PORT
@@ -49,6 +34,4 @@ services:
     disk:
       name: data
       mountPath: /opt/render/project/src/data
-      sizeGB: 1
-    healthCheckPath: /health
-    autoDeploy: true 
+      sizeGB: 1 

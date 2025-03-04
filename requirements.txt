@@ -17,6 +17,4 @@ twilio==8.10.0
 apscheduler==3.10.4
 SQLAlchemy==2.0.25
 gunicorn==21.2.0
-Flask==2.3.3
-Werkzeug==2.3.7
-Jinja2==3.1.2 
+Flask==2.3.3 

@@ -35,9 +35,6 @@ class ReportManager:
         # Load environment variables
         load_dotenv()
         
-        # Check if we're running on Render
-        self.is_render = os.environ.get('RENDER', 'false').lower() == 'true'
-        
         self.data_dir = Path("data")
         self.data_dir.mkdir(exist_ok=True)
         
@@ -82,6 +79,9 @@ class ReportManager:
             print(f"SMTP Port: {self.smtp_port}")
             print(f"Sender Email: {self.sender_email}")
             print(f"Password Set: {'Yes' if self.sender_password else 'No'}\n")
+        
+        # Set base URL for report access
+        self.base_url = os.getenv('BASE_URL', 'http://localhost:8501')
         
         # Initialize scheduler
         self.scheduler = BackgroundScheduler()
@@ -885,6 +885,7 @@ class ReportManager:
                             except Exception as e:
                                 print(f"Error parsing one-time schedule date: {str(e)}")
                                 next_run_str = None
+                        else:
                         else:
                             # For recurring schedules, get next run time from the scheduler
                             if job and job.next_run_time:
@@ -1713,10 +1714,7 @@ class ReportManager:
                 
             # Ensure base_url is set
             if not hasattr(self, 'base_url') or not self.base_url:
-                if self.is_render:
-                    self.base_url = os.environ.get('RENDER_EXTERNAL_URL', 'http://localhost:5000')
-                else:
-                    self.base_url = os.getenv('BASE_URL', 'http://localhost:8501')
+                self.base_url = os.getenv('BASE_URL', 'http://localhost:8501')
                 
             # Create the full URL
             if self.base_url.endswith('/'):
@@ -1726,6 +1724,7 @@ class ReportManager:
                 
             print(f"Generated report URL: {url}")
             return url
+            
         except Exception as e:
             print(f"Error generating report URL: {str(e)}")
             return f"file://{report_path}" 
